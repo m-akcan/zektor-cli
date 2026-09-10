@@ -92,11 +92,35 @@ export async function create(
 }
 
 /**
- * `--engine=postgres@17` → the tier's docker image for version 17.
+ * Engine version out of a docker reference, matching what the dashboard shows.
+ *
+ * Images arrive fully qualified — `ghcr.io/cloudnative-pg/postgresql:17.6-standard-trixie`
+ * — and per the Docker grammar the tag is what follows the final `:` only when
+ * that colon comes after the final `/`; otherwise it is a registry port. Ported
+ * from `lib/utils/docker-image.ts` so the CLI and the wizard name versions
+ * identically.
+ */
+function imageVersion(image?: string | null): string {
+    if (!image) return ''
+
+    const lastColon = image.lastIndexOf(':')
+    const lastSlash = image.lastIndexOf('/')
+    const tag = lastColon > lastSlash ? image.slice(lastColon + 1) : ''
+
+    if (!tag) return image
+
+    return tag.match(/^\d+(?:\.\d+)*/)?.[0] ?? tag
+}
+
+/**
+ * `--engine=postgres@17` → the tier's docker image id.
+ *
+ * Accepts a major version as shorthand: `17` matches `17.6`, because that is how
+ * people say it and the dashboard offers one option per parsed version anyway.
+ * Requiring `@17.6` would mean reading the image reference to type the flag.
  *
  * The engine itself is implied by the plan, so a mismatch is a user error worth
- * naming rather than silently ignoring. Omitting `--engine` lets the backend
- * pick its default image.
+ * naming rather than ignoring. Omitting `--engine` lets the backend choose.
  */
 function resolveEngine(tier: PricingTier, engine?: string): number | undefined {
     if (!engine) return undefined
@@ -111,12 +135,15 @@ function resolveEngine(tier: PricingTier, engine?: string): number | undefined {
 
     if (!version) return undefined
 
-    const image = tier.dockerImages.find((i) => i.version === version)
+    const image = tier.dockerImages.find((i) => {
+        const parsed = imageVersion(i.version)
+        return parsed === version || parsed.startsWith(`${version}.`)
+    })
 
     if (!image)
         fail(
             `Plan "${tier.name}" cannot run ${tier.product} ${version}. ` +
-                `Available: ${options(tier.dockerImages.map((i) => i.version))}`
+                `Available: ${options(tier.dockerImages.map((i) => imageVersion(i.version)))}`
         )
 
     return image.id

@@ -156,8 +156,15 @@ export const api = {
     deleteInstance: (id: number | string) =>
         request<void>(`/api/instances/${id}`, { method: 'DELETE' }),
 
-    /** Plans, including which engine versions each one can run. */
-    listTiers: () => request<PricingTier[]>('/api/products'),
+    /**
+     * Plans, including which engine versions each one can run.
+     *
+     * `/api/instances/pricing-tiers`, not `/api/products` — the latter is the
+     * admin catalogue and returns `dockerImages: []`, so engine versions cannot
+     * be resolved from it. Both answer for an admin account, which is exactly
+     * why the wrong one is easy to pick.
+     */
+    listTiers: () => request<PricingTier[]>('/api/instances/pricing-tiers'),
 
     listLocations: () => request<Location[]>('/api/instances/available-locations'),
 
