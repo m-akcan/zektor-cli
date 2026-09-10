@@ -1,0 +1,31 @@
+{
+  "name": "zektor",
+  "version": "0.1.0",
+  "description": "Command-line client for Zektor.io managed databases and caches",
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=18"
+  },
+  "bin": {
+    "zektor": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "typecheck": "tsc --noEmit",
+    "gen:api": "openapi-typescript ${ZEKTOR_API_URL:-http://localhost:5098}/swagger/v1/swagger.json -o types/api.d.ts",
+    "prepublishOnly": "npm run build"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "openapi-typescript": "^7.4.0",
+    "typescript": "^5.6.0"
+  }
+}
