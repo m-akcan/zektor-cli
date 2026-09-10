@@ -75,6 +75,92 @@ export interface Me {
     role: string
 }
 
+export interface DockerImage {
+    id: number
+    version: string
+}
+
+/** A plan. `product` is the engine it runs; `productGroup` is database vs cache. */
+export interface PricingTier {
+    id: number
+    name: string
+    monthlyPriceEur: number
+    product: string
+    productGroup: string
+    memoryMb?: number | null
+    storageMb?: number | null
+    dockerImages: DockerImage[]
+}
+
+export interface Location {
+    id: number
+    name: string
+    city: string
+    country: string
+    rentingAvailable: boolean
+}
+
+export interface Instance {
+    id: number
+    name: string
+    status: string
+    port: number
+    createdAt: string
+    location: string
+    connectionString: string
+    pricingTier: PricingTier
+}
+
+export interface CreateInstanceRequest {
+    name: string
+    location?: number
+    priceId: number
+    dockerImageId?: number
+}
+
+export interface CreateInstanceResponse {
+    instanceId: number
+    actionId: number
+}
+
+/**
+ * `GET /api/instances/{id}/connection`.
+ *
+ * For Valkey/Redis this carries a usable `connectionString`. For Postgres it
+ * does not, and cannot: the password is emitted once when a role is created or
+ * rotated and the server never stores the plaintext, so `password` and
+ * `connectionString` are always null there.
+ */
+export interface ConnectionInfo {
+    type?: 'valkey' | 'redis' | 'mongo' | 'ferret' | 'postgres'
+    host: string
+    port: number
+    username?: string
+    databaseName?: string
+    database?: string
+    ssl?: string
+    password: string | null
+    connectionString: string | null
+}
+
 export const api = {
     me: (token?: string) => request<Me>('/api/auth/me', { token }),
+
+    listInstances: () => request<Instance[]>('/api/instances'),
+
+    getInstance: (id: number | string) => request<Instance>(`/api/instances/${id}`),
+
+    createInstance: (body: CreateInstanceRequest) =>
+        request<CreateInstanceResponse>('/api/instances', { method: 'POST', body }),
+
+    deleteInstance: (id: number | string) =>
+        request<void>(`/api/instances/${id}`, { method: 'DELETE' }),
+
+    /** Plans, including which engine versions each one can run. */
+    listTiers: () => request<PricingTier[]>('/api/products'),
+
+    listLocations: () => request<Location[]>('/api/instances/available-locations'),
+
+    getConnection: (id: number | string) =>
+        request<ConnectionInfo>(`/api/instances/${id}/connection`),
 }

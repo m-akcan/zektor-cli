@@ -53,8 +53,33 @@ environment variable is overriding the account you logged in as.
 | `zektor login` | Store a token for this machine |
 | `zektor logout` | Forget the stored token. Does **not** revoke it — the same token may be in use elsewhere. Revoke in Settings to end its access. |
 | `zektor whoami` | Show the account, API URL, and where the token came from |
+| `zektor list` | List your instances |
+| `zektor show <id>` | Show one instance |
+| `zektor db create` / `zektor cache create` | Provision a database or cache |
+| `zektor delete <id>` | Delete an instance. Asks you to type its name; `--yes` skips that. |
+| `zektor connect <id>` | Open `redis-cli` against a cache |
 
 Every read command takes `--json`.
+
+### Creating
+
+```bash
+zektor db create --name=my-db --tier=AKPG-5 --region=nbg1 --engine=postgres@17
+```
+
+`--tier`, `--region` and `--engine` take the names you see in the dashboard and
+are resolved to ids for you. Pass a wrong one and the error lists what is valid.
+
+`--storage` appears in the dashboard's "equivalent CLI" panel but is rejected
+here: the wizard's own create call does not send it, and storage comes from the
+plan. Choose it with `--tier`.
+
+### Connecting
+
+`connect` opens `redis-cli` for a cache. For Postgres it prints the command
+shape instead — the password is shown once when a role is created or rotated and
+the server never stores it, so there is no credential for the CLI to fetch.
+Create or rotate a role in the dashboard first.
 
 ## Output
 
