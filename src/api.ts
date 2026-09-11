@@ -58,6 +58,12 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
     if (response.status === 401)
         throw new ApiError(401, 'Token rejected. It may have been revoked — check Settings.')
 
+    // The API answers 404 for an id that is gone as well as one that was never
+    // yours, so the message cannot promise which — but "not found" beats the
+    // bare status line a caller would otherwise print.
+    if (response.status === 404)
+        throw new ApiError(404, `Not found: ${path.replace(/^\/api/, '')}`)
+
     if (!response.ok) {
         const text = await response.text().catch(() => '')
         throw new ApiError(response.status, text.trim() || `${response.status} ${response.statusText}`)
@@ -100,6 +106,13 @@ export interface Location {
     rentingAvailable: boolean
 }
 
+export interface Volume {
+    id: number
+    name: string
+    status: string
+    sizeInGb: number
+}
+
 export interface Instance {
     id: number
     name: string
@@ -109,6 +122,28 @@ export interface Instance {
     location: string
     connectionString: string
     pricingTier: PricingTier
+
+    // Postgres storage. Absent on caches, which have no volume of their own.
+    dbStorageLimitMb?: number
+    dbStorageUsedMb?: number
+    volumes?: Volume[]
+    enableAutoScale?: boolean
+    autoScaleUpOnly?: boolean
+    autoScalingLimitGb?: number
+    minimumDiskSizeGb?: number
+}
+
+/** Long-running server-side work. Returned by scale and volume operations. */
+export interface ActionResult {
+    id: number
+}
+
+export interface StorageSettings {
+    enableAutoScale?: boolean
+    autoScaleUpOnly?: boolean
+    /** null clears the ceiling — autoscaling then has no upper bound. */
+    autoScalingLimitGb?: number | null
+    minimumDiskSizeGb?: number | null
 }
 
 export interface CreateInstanceRequest {
@@ -170,4 +205,30 @@ export const api = {
 
     getConnection: (id: number | string) =>
         request<ConnectionInfo>(`/api/instances/${id}/connection`),
+
+    /**
+     * Moves an instance to another plan. `upScale` tells the backend which
+     * direction it is going; the dashboard derives it by comparing monthly
+     * price, and so do we, so both agree on what counts as an upgrade.
+     */
+    scaleInstance: (id: number | string, pricingTierId: number, upScale: boolean, type: string) =>
+        request<ActionResult>(`/api/instances/${id}/scale?type=${encodeURIComponent(type)}`, {
+            method: 'POST',
+            body: { PricingTierId: pricingTierId, UpScale: upScale },
+        }),
+
+    createVolume: (instanceId: number | string, size: number) =>
+        request<ActionResult>(`/api/volumes/${instanceId}`, {
+            method: 'POST',
+            body: { size, instanceId: Number(instanceId) },
+        }),
+
+    resizeVolume: (volumeId: number, size: number) =>
+        request<ActionResult>(`/api/volumes/${volumeId}`, {
+            method: 'PATCH',
+            body: { volumeId, size },
+        }),
+
+    updateStorageSettings: (id: number | string, settings: StorageSettings) =>
+        request<Instance>(`/api/instances/${id}/storage`, { method: 'PATCH', body: settings }),
 }

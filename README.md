@@ -58,6 +58,8 @@ environment variable is overriding the account you logged in as.
 | `zektor db create` / `zektor cache create` | Provision a database or cache |
 | `zektor delete <id>` | Delete an instance. Asks you to type its name; `--yes` skips that. |
 | `zektor connect <id>` | Open `redis-cli` against a cache |
+| `zektor scale <id> --tier=…` | Move an instance to another plan |
+| `zektor storage show\|resize\|autoscale <id>` | Postgres storage (see below) |
 
 Every read command takes `--json`.
 
@@ -80,6 +82,29 @@ plan. Choose it with `--tier`.
 shape instead — the password is shown once when a role is created or rotated and
 the server never stores it, so there is no credential for the CLI to fetch.
 Create or rotate a role in the dashboard first.
+
+### Scaling and storage
+
+```bash
+zektor scale 42 --tier=AKPG-10
+zektor storage show 42
+zektor storage resize 42 --size=50
+zektor storage autoscale 42 --on --limit=100
+```
+
+`scale` asks you to type the instance name, since it restarts the instance;
+`--yes` skips that. A downgrade warns that the smaller plan may be below what
+the instance is currently using.
+
+Storage is **PostgreSQL only** — a cache is sized by its plan, so use `scale`.
+Volumes only grow, and the first one must be at least 10 GB.
+
+Two API limitations worth knowing:
+
+- `--min` is write-only. The API accepts it but never returns it, so
+  `storage show` reports `not reported` rather than pretending it is unset.
+- A ceiling or floor cannot be cleared once set — the API reads an omitted
+  value as "leave unchanged". Set a new number instead.
 
 ## Output
 
