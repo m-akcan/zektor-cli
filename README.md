@@ -2,8 +2,13 @@
 
 Command-line client for [Zektor.io](https://zektor.io) managed databases and caches.
 
-> **Status: early.** Authentication works; resource commands (`db create`,
-> `list`, `connect`) are not built yet. See [Roadmap](#roadmap).
+[![npm](https://img.shields.io/npm/v/zektor)](https://www.npmjs.com/package/zektor)
+
+> **Status: 0.1.0, and waiting on the API.** Every command below is built and
+> tested, but the token endpoints it authenticates against are not deployed to
+> production yet — so `zektor login` cannot succeed until they are, and
+> **Settings → Access tokens** does not exist in the dashboard to mint one from.
+> Installing now is fine; using it is not yet possible.
 
 ## Install
 
@@ -129,10 +134,16 @@ continuing past an error the shell never saw.
 
 ## Roadmap
 
-`db create` and `cache create` will match the "equivalent CLI" panel already
-shown in the dashboard's creation wizard, so what it displays is a command you
-can actually run. Then `list`, `show`, `delete`, and `connect` — which execs
-into `psql` or `redis-cli` with the right connection string.
+Next, roughly in order of how often they would be reached for:
+
+- **Backups** — list, trigger, and restore to a point in time
+- **Roles** — create and rotate Postgres credentials, which is also what would
+  let `connect` work for Postgres rather than printing instructions
+- **Logs** — tail an instance, the one thing people currently open a browser for
+- **Waiting** — a `--wait` flag on `create` and `scale`, so scripts can block on
+  an instance becoming ready instead of polling `list`
+
+Not planned: admin commands. The admin console is deliberately browser-only.
 
 ## Development
 
