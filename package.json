@@ -3,6 +3,25 @@
   "version": "0.1.0",
   "description": "Command-line client for Zektor.io managed databases and caches",
   "license": "MIT",
+  "author": "Muhammed Akcan",
+  "homepage": "https://github.com/m-akcan/zektor-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/m-akcan/zektor-cli.git"
+  },
+  "bugs": {
+    "url": "https://github.com/m-akcan/zektor-cli/issues"
+  },
+  "keywords": [
+    "zektor",
+    "cli",
+    "postgres",
+    "postgresql",
+    "valkey",
+    "redis",
+    "database",
+    "devops"
+  ],
   "type": "module",
   "engines": {
     "node": ">=18"
