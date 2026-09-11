@@ -53,10 +53,17 @@ export async function storageShow(id: string, opts: { json?: boolean }): Promise
         ['autoscale', instance.enableAutoScale ? 'on' : 'off'],
         ['up only', instance.autoScaleUpOnly ? 'yes' : 'no'],
         ['limit', instance.autoScalingLimitGb ? `${instance.autoScalingLimitGb} GB` : 'none'],
-        // The API never returns minimumDiskSizeGb — it appears only in the patch
-        // request DTO, so a value set here cannot be read back. Reporting "none"
-        // would be a lie whenever one is set.
-        ['minimum', instance.minimumDiskSizeGb ? `${instance.minimumDiskSizeGb} GB` : 'not reported'],
+        // Three states, not two. Older backends omit the field entirely — it was
+        // absent from the read DTO while being settable — and there "none" would
+        // be a lie whenever a minimum is set. A present 0 genuinely means unset.
+        [
+            'minimum',
+            instance.minimumDiskSizeGb === undefined
+                ? 'not reported (older API)'
+                : instance.minimumDiskSizeGb
+                  ? `${instance.minimumDiskSizeGb} GB`
+                  : 'none',
+        ],
     ]
 
     for (const [key, value] of rows) data(`${key.padEnd(10)} ${value}`, false)

@@ -101,8 +101,9 @@ Volumes only grow, and the first one must be at least 10 GB.
 
 Two API limitations worth knowing:
 
-- `--min` is write-only. The API accepts it but never returns it, so
-  `storage show` reports `not reported` rather than pretending it is unset.
+- `--min` needs a recent API. Older versions accept the value but never return
+  it, and `storage show` says `not reported (older API)` rather than pretending
+  no minimum is set.
 - A ceiling or floor cannot be cleared once set — the API reads an omitted
   value as "leave unchanged". Set a new number instead.
 
