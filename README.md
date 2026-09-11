@@ -143,7 +143,9 @@ npm run build
 node dist/index.js whoami
 ```
 
-`types/api.d.ts` is generated from the server's OpenAPI document rather than
-hand-written, so a DTO change on the backend becomes a build error here instead
-of a runtime surprise in someone's terminal. Point it at a local API with
+`npm run gen:api` writes the API's full OpenAPI types to `types/`, which is
+gitignored — it describes every endpoint including the admin surface, while this
+CLI uses four, and nothing imports it. It is a tool for checking the
+hand-written interfaces in `src/api.ts` against the real contract, not a build
+input. Point it at a local API with
 `ZEKTOR_API_URL=http://localhost:5098 npm run gen:api`.

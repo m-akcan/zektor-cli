@@ -1,9 +1,13 @@
 import { resolveApiUrl, resolveToken } from './config.js'
 
 /**
- * Thin fetch wrapper. Deliberately not a generated runtime client — the types in
- * `types/api.d.ts` come from the server's OpenAPI document, so drift is a build
- * error, while the transport stays small enough to read in one sitting.
+ * Thin fetch wrapper over the handful of endpoints the CLI uses.
+ *
+ * The interfaces below are hand-written and describe only the fields actually
+ * read, so a field appearing or vanishing server-side will not break the build —
+ * it will show up at runtime. `npm run gen:api` writes the full OpenAPI types to
+ * `types/` (gitignored) for checking these against the real contract; wiring
+ * them in directly would pull the entire admin surface into a public package.
  */
 
 /** Thrown for any non-2xx response, carrying the status so callers can branch. */

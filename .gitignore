@@ -2,3 +2,8 @@ node_modules/
 dist/
 *.tsbuildinfo
 .DS_Store
+
+# Generated from the API OpenAPI document. Not committed: it describes every
+# endpoint including the admin surface, while the CLI uses a handful, and
+# nothing imports it. Regenerate with `npm run gen:api` to check for drift.
+types/
