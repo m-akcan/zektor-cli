@@ -65,6 +65,7 @@ environment variable is overriding the account you logged in as.
 | `zektor connect <id>` | Open `redis-cli` against a cache |
 | `zektor scale <id> --tier=…` | Move an instance to another plan |
 | `zektor storage show\|resize\|autoscale <id>` | Postgres storage (see below) |
+| `zektor mcp` | Run as an MCP server, so an editor or agent can drive the API (see below) |
 
 Every read command takes `--json`.
 
@@ -112,6 +113,66 @@ Two API limitations worth knowing:
 - A ceiling or floor cannot be cleared once set — the API reads an omitted
   value as "leave unchanged". Set a new number instead.
 
+## MCP server
+
+`zektor mcp` speaks the [Model Context Protocol](https://modelcontextprotocol.io)
+over stdio, so an editor or agent can list, create and scale instances directly.
+It uses the token you already logged in with — there is nothing extra to set up.
+
+Add it to your MCP client's config:
+
+```json
+{
+  "mcpServers": {
+    "zektor": { "command": "npx", "args": ["-y", "zektor", "mcp"] }
+  }
+}
+```
+
+For Claude Code, `claude mcp add zektor -- npx -y zektor mcp` does the same thing.
+
+### Tools
+
+| Tool | |
+|---|---|
+| `whoami`, `list_instances`, `get_instance` | read-only |
+| `list_plans`, `list_regions` | read-only; call these before creating rather than guessing a name |
+| `get_connection` | read-only, **returns a live password** for caches |
+| `get_storage` | read-only, PostgreSQL |
+| `create_instance` | costs money |
+| `scale_instance` | changes the bill; scaling down can leave an instance short of what it is using |
+| `resize_storage`, `set_autoscale` | PostgreSQL; volumes only grow |
+| `delete_instance` | **off by default** — see below |
+
+### Guardrails
+
+The CLI's protection against destroying the wrong thing is a prompt: it makes
+you type the instance name at a terminal. An MCP server has no terminal and its
+caller is a model, so that guard is translated rather than dropped.
+
+- **`delete_instance` is not registered unless `ZEKTOR_MCP_ALLOW_DESTRUCTIVE=1`
+  is set.** By default the tool does not appear in the list at all, so the worst
+  a confused or injected instruction achieves is spending money, not losing data.
+- **`scale_instance` and `delete_instance` require a `confirm_name` argument**
+  that must match the instance's real name. It can only be filled in by having
+  actually looked the instance up, which is the property the typed-name prompt
+  had.
+- Every tool carries the protocol's `readOnlyHint` / `destructiveHint`
+  annotations, so a client that asks before running a tool asks about the right
+  ones.
+
+`get_connection` deserves its own note: for a cache it returns a connection
+string containing a live password, which means putting that password into the
+model's context. That is the point of the tool — it is how an agent wires an app
+up to a new cache — but it is worth knowing before you enable the server
+somewhere that logs conversations.
+
+### Diagnostics
+
+The server writes its API URL, where it found a token, and whether deletion is
+enabled to stderr at startup; MCP clients collect that as server logs. A server
+pointed at the wrong API looks exactly like a broken one until you read them.
+
 ## Output
 
 **stdout carries data and nothing else.** Progress, warnings and errors go to
@@ -131,6 +192,7 @@ continuing past an error the shell never saw.
 | `ZEKTOR_TOKEN` | Access token. Overrides the config file. |
 | `ZEKTOR_API_URL` | API base URL. Defaults to `https://api.zektor.io`. |
 | `XDG_CONFIG_HOME` | Honoured when set; config lives under `$XDG_CONFIG_HOME/zektor/`. |
+| `ZEKTOR_MCP_ALLOW_DESTRUCTIVE` | Set to `1` to register `delete_instance` on the MCP server. Unset, the tool does not exist. |
 
 ## Roadmap
 
@@ -153,6 +215,10 @@ npm run gen:api     # regenerate types/api.d.ts from the API's OpenAPI document
 npm run build
 node dist/index.js whoami
 ```
+
+Point the whole thing at a local API with `ZEKTOR_API_URL=http://localhost:5098`,
+including the MCP server — `ZEKTOR_API_URL=http://localhost:5098 node dist/index.js mcp`
+serves your development backend rather than production.
 
 `npm run gen:api` writes the API's full OpenAPI types to `types/`, which is
 gitignored — it describes every endpoint including the admin surface, while this

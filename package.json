@@ -1,6 +1,6 @@
 {
   "name": "zektor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Command-line client for Zektor.io managed databases and caches",
   "license": "MIT",
   "author": "Muhammed Akcan",
@@ -40,7 +40,9 @@
     "prepublishOnly": "npm run build"
   },
   "dependencies": {
-    "commander": "^12.1.0"
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "commander": "^12.1.0",
+    "zod": "^4.6.4"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

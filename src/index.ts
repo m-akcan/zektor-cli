@@ -9,13 +9,14 @@ import { logout } from './commands/logout.js'
 import { whoami } from './commands/whoami.js'
 import { ApiError, NotAuthenticatedError } from './api.js'
 import { fail } from './output.js'
+import { VERSION } from './version.js'
 
 const program = new Command()
 
 program
     .name('zektor')
     .description('Command-line client for Zektor.io managed databases and caches')
-    .version('0.1.0')
+    .version(VERSION)
 
 program
     .command('login')
@@ -131,6 +132,21 @@ storage
     .option('--json', 'Emit JSON on stdout')
     .action(async (id, options) => {
         await storageAutoscale(id, options)
+    })
+
+/**
+ * `zektor mcp` — serve the API to an MCP client over stdio.
+ *
+ * Imported lazily. The MCP SDK is by far the heaviest thing in the dependency
+ * tree, and loading it on every `zektor list` would be a cost paid by everyone
+ * to benefit the few who wire this into an editor.
+ */
+program
+    .command('mcp')
+    .description('Run as an MCP server over stdio (for editors and agents)')
+    .action(async () => {
+        const { startMcpServer } = await import('./mcp.js')
+        await startMcpServer()
     })
 
 program
