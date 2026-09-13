@@ -1,5 +1,6 @@
 import { createInterface } from 'node:readline/promises'
 import { api } from '../api.js'
+import { resolveTier } from '../resolve.js'
 import { data, fail, info } from '../output.js'
 
 /**
@@ -20,18 +21,7 @@ export async function scale(
 
     if (!current) fail(`Cannot read the current plan for ${instance.name}.`)
 
-    const group = current.productGroup
-    const tiers = (await api.listTiers()).filter((t) => t.productGroup === group)
-
-    const slug = (v: string) => v.trim().toLowerCase().replace(/\s+/g, '-')
-    const target = tiers.find((t) => slug(t.name) === slug(opts.tier!))
-
-    if (!target)
-        fail(
-            `Unknown ${group} plan "${opts.tier}". Available: ${
-                tiers.map((t) => t.name).join(', ') || '(none)'
-            }`
-        )
+    const target = resolveTier(await api.listTiers(), current.productGroup, opts.tier)
 
     if (target.id === current.id)
         fail(`${instance.name} is already on ${current.name}.`)
