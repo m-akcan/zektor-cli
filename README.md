@@ -4,11 +4,15 @@ Command-line client for [Zektor.io](https://zektor.io) managed databases and cac
 
 [![npm](https://img.shields.io/npm/v/zektor)](https://www.npmjs.com/package/zektor)
 
-> **Status: 0.1.0, and waiting on the API.** Every command below is built and
-> tested, but the token endpoints it authenticates against are not deployed to
-> production yet — so `zektor login` cannot succeed until they are, and
-> **Settings → Access tokens** does not exist in the dashboard to mint one from.
-> Installing now is fine; using it is not yet possible.
+> **1.0.0 is a promise about this CLI, not about the platform.** The command
+> surface is settled: flags, output shapes and exit codes will not change without
+> a major version. `--json` output is safe to parse in a script.
+>
+> **`zektor login` still cannot succeed.** The token endpoints are deployed, but
+> they sit behind a feature flag that is currently off, so `/api/tokens` answers
+> 404 and **Settings → Access tokens** is not in the dashboard to mint one from.
+> That is a rollout decision on the platform side, not missing work here.
+> Installing now is harmless; logging in has to wait.
 
 ## Install
 
