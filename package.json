@@ -1,6 +1,6 @@
 {
   "name": "zektor",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Command-line client for Zektor.io managed databases and caches",
   "license": "MIT",
   "author": "Muhammed Akcan",
