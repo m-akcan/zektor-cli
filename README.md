@@ -4,9 +4,13 @@ Command-line client for [Zektor.io](https://zektor.io) managed databases and cac
 
 [![npm](https://img.shields.io/npm/v/zektor)](https://www.npmjs.com/package/zektor)
 
-> **1.0.0 settles the command surface.** Flags, output shapes and exit codes will
-> not change without a major version, so `--json` output is safe to parse in a
-> script.
+> **Beta.** The CLI and its MCP server are supported and live, but young. Expect
+> commands to be added and rough edges filed off as we learn how people use them.
+>
+> Beta is not a warning about stability of what exists: **1.0.0 settles the
+> command surface.** Flags, output shapes and exit codes will not change without
+> a major version, so `--json` is safe to parse in a script, and tokens you
+> create now keep working.
 
 ## Install
 
