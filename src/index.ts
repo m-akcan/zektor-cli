@@ -7,9 +7,15 @@ import { storageAutoscale, storageResize, storageShow } from './commands/storage
 import { login } from './commands/login.js'
 import { logout } from './commands/logout.js'
 import { whoami } from './commands/whoami.js'
+import { tokensCreate, tokensList, tokensRevoke } from './commands/tokens.js'
 import { ApiError, NotAuthenticatedError } from './api.js'
 import { fail } from './output.js'
 import { VERSION } from './version.js'
+
+/** `--scope a,b --scope c` accumulates rather than overwriting. */
+function collectScopeOption(value: string, previous: string[]): string[] {
+    return [...previous, ...value.split(',').map((s) => s.trim()).filter(Boolean)]
+}
 
 const program = new Command()
 
@@ -132,6 +138,50 @@ storage
     .option('--json', 'Emit JSON on stdout')
     .action(async (id, options) => {
         await storageAutoscale(id, options)
+    })
+
+/**
+ * `zektor tokens` — mint narrower credentials from the one you already hold.
+ *
+ * Every token this creates is weaker than the one creating it: the backend
+ * intersects the scopes, caps the expiry at your own, and carries over any
+ * instance pin. That is what makes it safe to run unattended — a token in CI
+ * cannot use this to widen itself, only to hand something narrower to whatever
+ * it spawns. Revoking a token revokes everything it minted.
+ */
+const tokens = program.command('tokens').description('Personal access tokens')
+
+tokens
+    .command('list')
+    .description('List your tokens')
+    .option('--json', 'Emit JSON on stdout')
+    .action(async (options) => {
+        await tokensList(options)
+    })
+
+tokens
+    .command('create')
+    .description('Mint a narrower token from the one you are using')
+    .requiredOption('--name <name>', 'Label for the token, e.g. "ci" or "agent-44"')
+    .option(
+        '--scope <scope>',
+        'Scope to grant; repeatable or comma-separated. Defaults to everything your own token has.',
+        collectScopeOption,
+        [] as string[]
+    )
+    .requiredOption('--expires <when>', 'When it dies: 30m, 12h, 7d, or an ISO date')
+    .option('--instance <id>', 'Pin the token to one instance')
+    .option('--json', 'Emit JSON on stdout')
+    .action(async (options) => {
+        await tokensCreate(options)
+    })
+
+tokens
+    .command('revoke <id>')
+    .description('Revoke a token, and everything it minted')
+    .option('--yes', 'Skip the confirmation prompt')
+    .action(async (id, options) => {
+        await tokensRevoke(id, options)
     })
 
 /**

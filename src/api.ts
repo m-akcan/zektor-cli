@@ -182,10 +182,51 @@ export interface ConnectionInfo {
     connectionString: string | null
 }
 
+/** A token as the list reports it. Carries no secret. */
+export interface ApiTokenSummary {
+    id: number
+    name: string
+    prefix: string
+    createdAt: string
+    lastUsedAt: string | null
+    scopes: string
+    expiresAt: string | null
+    instanceId: number | null
+    /** Set when another token minted this one. Revoking that token revokes this one. */
+    parentTokenId: number | null
+}
+
+/** The show-once creation response. `token` exists nowhere else afterwards. */
+export interface CreatedApiToken extends ApiTokenSummary {
+    token: string
+}
+
+export interface CreateTokenRequest {
+    name: string
+    scopes?: string[]
+    expiresAt?: string
+    instanceId?: number
+}
+
 export const api = {
     me: (token?: string) => request<Me>('/api/auth/me', { token }),
 
     listInstances: () => request<Instance[]>('/api/instances'),
+
+    listTokens: () => request<ApiTokenSummary[]>('/api/tokens'),
+
+    /**
+     * Mints a token. When the caller is itself a token — which, from the CLI, it
+     * always is — the backend forces the result to be strictly weaker: scopes a
+     * subset of the caller's, expiry no later, and the caller's instance pin
+     * inherited. So this cannot be used to widen the credential running it.
+     */
+    createToken: (body: CreateTokenRequest) =>
+        request<CreatedApiToken>('/api/tokens', { method: 'POST', body }),
+
+    /** Revokes a token and everything it minted. */
+    revokeToken: (id: number | string) =>
+        request<void>(`/api/tokens/${id}`, { method: 'DELETE' }),
 
     getInstance: (id: number | string) => request<Instance>(`/api/instances/${id}`),
 
