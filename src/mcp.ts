@@ -278,8 +278,8 @@ export async function startMcpServer(): Promise<void> {
                 'password. Treat the result as a secret and do not repeat it anywhere it would ' +
                 'be stored or logged.\n\n' +
                 'For PostgreSQL there is no password to return — one is shown only when a role ' +
-                'is created or rotated, and the server does not keep it — so the result carries ' +
-                'host, port and database, and the password must come from the dashboard.',
+                'is created, and the server does not keep it — so the result carries host, port ' +
+                'and database. Use create_ephemeral_role to obtain a usable credential.',
             inputSchema: { id: instanceId },
             annotations: { readOnlyHint: true, openWorldHint: true },
         },
@@ -305,9 +305,9 @@ export async function startMcpServer(): Promise<void> {
                         password: null,
                         connectionString: null,
                         note:
-                            'PostgreSQL passwords are not retrievable. Create or rotate a role in ' +
-                            'the dashboard to get one, then connect with ' +
-                            'postgresql://<role>:<password>@host:port/database?sslmode=require',
+                            'PostgreSQL passwords are not stored and cannot be read back. Call ' +
+                            'create_ephemeral_role on this instance to mint a temporary one that ' +
+                            'returns a usable connection string and removes itself afterwards.',
                     }
 
                 return {
@@ -420,6 +420,91 @@ export async function startMcpServer(): Promise<void> {
                     direction: upScale ? 'up' : 'down',
                     monthlyPriceEur: target.monthlyPriceEur,
                     note: 'Scaling is asynchronous. Watch get_instance for the new plan.',
+                }
+            })
+    )
+
+    server.registerTool(
+        'create_ephemeral_role',
+        {
+            title: 'Create a temporary PostgreSQL login',
+            description:
+                'RETURNS A LIVE CREDENTIAL. Creates a PostgreSQL role that stops working by ' +
+                'itself after ttl_seconds and is then removed.\n\n' +
+                'This is the way to connect to a PostgreSQL instance: passwords are never ' +
+                'stored, so get_connection cannot return one. The expiry is enforced by ' +
+                'PostgreSQL itself, so the credential dies on time whether or not anything ' +
+                'else is running.\n\n' +
+                'The password is returned once and exists nowhere else. Treat it as a secret ' +
+                'and do not repeat it anywhere it would be stored or logged.',
+            inputSchema: {
+                id: instanceId,
+                ttl_seconds: z.coerce
+                    .number()
+                    .int()
+                    .min(60)
+                    .max(86400)
+                    .default(3600)
+                    .describe('How long the credential lives, 60s to 24h. Defaults to one hour.'),
+                name: z
+                    .string()
+                    .optional()
+                    .describe('Label for the role. Defaults to a generated one.'),
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        },
+        async ({ id, ttl_seconds, name }) =>
+            guarded(async () => {
+                const instance = await api.getInstance(id)
+
+                if (instance.pricingTier?.product !== 'postgres')
+                    throw new Error(
+                        `${instance.name} runs ${instance.pricingTier?.product ?? 'an unknown engine'}. ` +
+                            'Ephemeral roles are a PostgreSQL feature — for a cache, get_connection ' +
+                            'already returns a usable connection string.'
+                    )
+
+                if (instance.status !== 'active')
+                    throw new Error(
+                        `${instance.name} is ${instance.status}, not active. Roles can be created ` +
+                            'once provisioning has finished.'
+                    )
+
+                // Unique by default. A fixed name collides on the second call, and a model
+                // retrying a failed step should not get "a role named agent already exists".
+                const roleName = name ?? `agent-${Date.now().toString(36)}`
+
+                const role = await api.createRole(id, {
+                    name: roleName,
+                    expiresInSeconds: ttl_seconds,
+                })
+
+                // A backend that predates expiring roles ignores expiresInSeconds rather
+                // than rejecting it — ASP.NET drops unknown JSON fields — and hands back a
+                // PERMANENT credential. Reporting a TTL we did not get is the worst
+                // possible outcome here, so say so loudly and name the role to delete.
+                if (role.expiresAt === null)
+                    throw new Error(
+                        `Role ${role.name} (id ${role.roleId}) was created WITHOUT an expiry: ` +
+                            'this API does not support ephemeral roles yet, and silently ignored ' +
+                            'the TTL. The credential is permanent — delete the role and upgrade ' +
+                            'the backend before relying on this tool.'
+                    )
+
+                return {
+                    instanceId: instance.id,
+                    roleId: role.roleId,
+                    name: role.name,
+                    user: role.user,
+                    host: role.host,
+                    port: role.port,
+                    password: role.password,
+                    connectionString: role.connectionString,
+                    expiresAt: role.expiresAt,
+                    note:
+                        'Shown once and not recoverable. PostgreSQL refuses this password after ' +
+                        'expiresAt, so long-running work should mint a fresh one rather than ' +
+                        'caching this past its expiry.',
                 }
             })
     )

@@ -182,6 +182,32 @@ export interface ConnectionInfo {
     connectionString: string | null
 }
 
+/**
+ * A freshly created Postgres role, with its password. Show-once: the backend keeps
+ * no copy, so this response is the only place the password ever exists.
+ */
+export interface RoleConnectionInfo {
+    roleId: number
+    name: string
+    user: string
+    host: string
+    port: number
+    password: string | null
+    connectionString: string | null
+    isDefault: boolean
+    isSuperuser: boolean
+    /** When the credential stops working. Null is permanent. */
+    expiresAt: string | null
+    attributes: string[]
+}
+
+export interface CreateRoleRequest {
+    name: string
+    /** Seconds until the role stops working. Omit for a permanent role. */
+    expiresInSeconds?: number
+    attributes?: string[]
+}
+
 /** A token as the list reports it. Carries no secret. */
 export interface ApiTokenSummary {
     id: number
@@ -214,6 +240,19 @@ export const api = {
     listInstances: () => request<Instance[]>('/api/instances'),
 
     listTokens: () => request<ApiTokenSummary[]>('/api/tokens'),
+
+    /**
+     * Creates a Postgres role and returns its password — the only time it exists.
+     *
+     * With `expiresInSeconds` the role is created WITH VALID UNTIL, so Postgres stops
+     * accepting the password at that instant on its own. Nothing has to run on time
+     * for the credential to die.
+     */
+    createRole: (instanceId: number | string, body: CreateRoleRequest) =>
+        request<RoleConnectionInfo>(`/api/instances/${instanceId}/roles`, {
+            method: 'POST',
+            body,
+        }),
 
     /**
      * Mints a token. When the caller is itself a token — which, from the CLI, it
