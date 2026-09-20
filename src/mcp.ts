@@ -445,6 +445,9 @@ export async function startMcpServer(): Promise<void> {
                         status: i.status,
                         isDefault: !i.isBranch,
                         plan: i.pricingTier?.name ?? null,
+                        // Null on a branch means somebody chose to keep it, which is worth
+                        // distinguishing from a branch that simply has time left.
+                        expiresAt: i.isBranch ? (i.branchExpiresAt ?? 'never') : undefined,
                     })),
                 }
             })
@@ -472,10 +475,17 @@ export async function startMcpServer(): Promise<void> {
                     .string()
                     .optional()
                     .describe('Plan for the branch, from list_plans. Defaults to the source\'s.'),
+                expires_in_days: z.coerce
+                    .number()
+                    .int()
+                    .min(1)
+                    .max(90)
+                    .optional()
+                    .describe('Days before the branch is deleted automatically. Defaults to 7.'),
             },
             annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         },
-        async ({ id, name, tier }) =>
+        async ({ id, name, tier, expires_in_days }) =>
             guarded(async () => {
                 const source = await api.getInstance(id)
 
@@ -492,7 +502,11 @@ export async function startMcpServer(): Promise<void> {
                 // No location: a branch is a clone in its source's pool, so the backend
                 // places it on the source's node and a region here would be ignored at
                 // best and contradictory at worst.
-                const result = await api.createBranch(id, { name, priceId: plan.id })
+                const result = await api.createBranch(id, {
+                    name,
+                    priceId: plan.id,
+                    expiresInDays: expires_in_days,
+                })
 
                 return {
                     branchId: result.instanceId,
@@ -501,9 +515,51 @@ export async function startMcpServer(): Promise<void> {
                     plan: plan.name,
                     monthlyPriceEur: plan.monthlyPriceEur,
                     status: 'creating',
+                    expiresInDays: expires_in_days ?? 7,
                     note:
                         'Poll get_instance until status is "active", then create_ephemeral_role '
-                        + 'on the branch for a connection. Delete it with delete_branch when done.',
+                        + 'on the branch for a connection. It deletes itself when it expires; '
+                        + 'delete_branch removes it sooner, and set_branch_expiry extends it or '
+                        + 'keeps it indefinitely.',
+                }
+            })
+    )
+
+    server.registerTool(
+        'set_branch_expiry',
+        {
+            title: 'Change when a branch expires',
+            description:
+                'Branches delete themselves after a while, so a forgotten one does not keep '
+                + 'costing money. This extends that deadline, or removes it entirely.\n\n'
+                + 'Removing it is a real decision, not a convenience: a branch holds a '
+                + 'snapshot of its source, and that snapshot keeps the source\'s old data '
+                + 'alive as the source is written to. A branch kept for ever slowly grows '
+                + 'the bill for the database it was forked from, which is not obvious from '
+                + 'looking at the branch.',
+            inputSchema: {
+                id: instanceId,
+                branch_id: z.coerce.number().int().positive().describe('The branch to change'),
+                expires_in_days: z.coerce
+                    .number()
+                    .int()
+                    .min(1)
+                    .max(90)
+                    .nullable()
+                    .describe('Days from now, or null to keep the branch indefinitely'),
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+        },
+        async ({ id, branch_id, expires_in_days }) =>
+            guarded(async () => {
+                const result = await api.setBranchExpiry(id, branch_id, expires_in_days ?? null)
+                return {
+                    branchId: result.branchId,
+                    expiresAt: result.expiresAt ?? 'never',
+                    note: result.expiresAt
+                        ? 'The branch deletes itself at that time.'
+                        : 'This branch will not be deleted automatically, and will keep its '
+                          + 'source\'s old data alive for as long as it exists.',
                 }
             })
     )
