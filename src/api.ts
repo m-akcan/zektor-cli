@@ -118,6 +118,9 @@ export interface Volume {
 }
 
 export interface Instance {
+    /** True when this instance is a branch rather than its cluster's default. */
+    isBranch?: boolean
+
     id: number
     name: string
     status: string
@@ -208,6 +211,18 @@ export interface CreateRoleRequest {
     attributes?: string[]
 }
 
+/** An instance and its branches — everything forked from one original. */
+export interface Cluster {
+    id: number
+    instances: Instance[]
+}
+
+export interface CreateBranchRequest {
+    name: string
+    priceId: number
+    location?: number
+}
+
 /** A token as the list reports it. Carries no secret. */
 export interface ApiTokenSummary {
     id: number
@@ -240,6 +255,32 @@ export const api = {
     listInstances: () => request<Instance[]>('/api/instances'),
 
     listTokens: () => request<ApiTokenSummary[]>('/api/tokens'),
+
+    /** The instance's cluster: itself plus every branch of it. */
+    getCluster: (instanceId: number | string) =>
+        request<Cluster>(`/api/instances/${instanceId}/cluster`),
+
+    /**
+     * Forks an instance. The branch is a copy-on-write clone: it has the source's
+     * data and costs nothing in storage until it diverges.
+     */
+    createBranch: (instanceId: number | string, body: CreateBranchRequest) =>
+        request<CreateInstanceResponse>(`/api/instances/${instanceId}/branches`, {
+            method: 'POST',
+            body,
+        }),
+
+    /**
+     * Deletes a branch. Deliberately not deleteInstance: this route needs only
+     * `branches:write`, so a token that can fork can also clean up without being
+     * able to destroy the database it forked from.
+     */
+    deleteBranch: (instanceId: number | string, branchId: number | string) =>
+        request<void>(`/api/instances/${instanceId}/branches/${branchId}`, { method: 'DELETE' }),
+
+    /** Makes a branch the cluster's default; the old default becomes a branch. */
+    promoteBranch: (branchId: number | string) =>
+        request<void>(`/api/instances/${branchId}/promote`, { method: 'POST' }),
 
     /**
      * Creates a Postgres role and returns its password — the only time it exists.

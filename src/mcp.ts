@@ -425,6 +425,152 @@ export async function startMcpServer(): Promise<void> {
     )
 
     server.registerTool(
+        'list_branches',
+        {
+            title: 'List an instance\'s branches',
+            description:
+                'The instance\'s cluster: the default database and every branch forked from '
+                + 'it. `isDefault` marks the one promotion would replace.',
+            inputSchema: { id: instanceId },
+            annotations: { readOnlyHint: true, openWorldHint: true },
+        },
+        async ({ id }) =>
+            guarded(async () => {
+                const cluster = await api.getCluster(id)
+                return {
+                    clusterId: cluster.id,
+                    instances: (cluster.instances ?? []).map((i) => ({
+                        id: i.id,
+                        name: i.name,
+                        status: i.status,
+                        isDefault: !i.isBranch,
+                        plan: i.pricingTier?.name ?? null,
+                    })),
+                }
+            })
+    )
+
+    server.registerTool(
+        'create_branch',
+        {
+            title: 'Branch a PostgreSQL database',
+            description:
+                'Creates a copy-on-write clone of a PostgreSQL instance: it has the '
+                + 'source\'s data from the moment of branching, and the two diverge '
+                + 'independently afterwards.\n\n'
+                + 'THIS COSTS MONEY — a branch is billed hourly at its plan\'s rate, like any '
+                + 'instance. Storage is shared with the source, so only what the branch '
+                + 'changes adds to it. Pick a smaller plan than the source when the branch is '
+                + 'for a test.\n\n'
+                + 'Takes about a minute: the clone itself is instant, but a second PostgreSQL '
+                + 'has to start. Poll get_instance until status is "active". Branching is '
+                + 'refused on instances not using branch-capable storage.',
+            inputSchema: {
+                id: instanceId,
+                name: z.string().min(1).describe('Name for the branch'),
+                tier: z
+                    .string()
+                    .optional()
+                    .describe('Plan for the branch, from list_plans. Defaults to the source\'s.'),
+            },
+            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+        },
+        async ({ id, name, tier }) =>
+            guarded(async () => {
+                const source = await api.getInstance(id)
+
+                if (source.pricingTier?.product !== 'postgres')
+                    throw new Error(
+                        `${source.name} runs ${source.pricingTier?.product ?? 'an unknown engine'}. `
+                        + 'Branching is a PostgreSQL feature.'
+                    )
+
+                const plan = tier
+                    ? resolveTier(await api.listTiers(), 'database', tier)
+                    : source.pricingTier
+
+                // No location: a branch is a clone in its source's pool, so the backend
+                // places it on the source's node and a region here would be ignored at
+                // best and contradictory at worst.
+                const result = await api.createBranch(id, { name, priceId: plan.id })
+
+                return {
+                    branchId: result.instanceId,
+                    name,
+                    branchedFrom: source.id,
+                    plan: plan.name,
+                    monthlyPriceEur: plan.monthlyPriceEur,
+                    status: 'creating',
+                    note:
+                        'Poll get_instance until status is "active", then create_ephemeral_role '
+                        + 'on the branch for a connection. Delete it with delete_branch when done.',
+                }
+            })
+    )
+
+    server.registerTool(
+        'delete_branch',
+        {
+            title: 'Delete a branch',
+            description:
+                'PERMANENTLY DESTROYS a branch and anything written to it since it was '
+                + 'created. The source database is untouched.\n\n'
+                + 'Only works on branches — it refuses the cluster\'s default database, which '
+                + 'has to be removed with delete_instance instead.',
+            inputSchema: {
+                id: instanceId,
+                branch_id: z.coerce.number().int().positive().describe('The branch to delete'),
+                confirm_name: confirmName,
+            },
+            annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+        },
+        async ({ id, branch_id, confirm_name }) =>
+            guarded(async () => {
+                const branch = await api.getInstance(branch_id)
+
+                if (confirm_name !== branch.name)
+                    throw new Error(
+                        `confirm_name "${confirm_name}" does not match branch #${branch_id}, which `
+                        + `is "${branch.name}". Nothing was deleted.`
+                    )
+
+                await api.deleteBranch(id, branch_id)
+                return { branchId: branch.id, name: branch.name, deleted: true, source: id }
+            })
+    )
+
+    server.registerTool(
+        'promote_branch',
+        {
+            title: 'Make a branch the default',
+            description:
+                'Promotes a branch to be its cluster\'s default database; the previous default '
+                + 'becomes a branch. Nothing is deleted and no data moves — this changes which '
+                + 'instance the cluster treats as the original.\n\n'
+                + 'Connection details do not follow the promotion: each instance keeps its own '
+                + 'host, port and credentials.',
+            inputSchema: {
+                branch_id: z.coerce.number().int().positive().describe('The branch to promote'),
+                confirm_name: confirmName,
+            },
+            annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
+        },
+        async ({ branch_id, confirm_name }) =>
+            guarded(async () => {
+                const branch = await api.getInstance(branch_id)
+
+                if (confirm_name !== branch.name)
+                    throw new Error(
+                        `confirm_name "${confirm_name}" does not match branch #${branch_id}, which `
+                        + `is "${branch.name}". Nothing was promoted.`
+                    )
+
+                await api.promoteBranch(branch_id)
+                return { branchId: branch.id, name: branch.name, promoted: true }
+            })
+    )
+
+    server.registerTool(
         'create_ephemeral_role',
         {
             title: 'Create a temporary PostgreSQL login',
