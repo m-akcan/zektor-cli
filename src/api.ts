@@ -120,6 +120,8 @@ export interface Volume {
 export interface Instance {
     /** True when this instance is a branch rather than its cluster's default. */
     isBranch?: boolean
+    /** When a branch is deleted automatically. Null or absent means it is kept. */
+    branchExpiresAt?: string | null
 
     id: number
     name: string
@@ -221,6 +223,8 @@ export interface CreateBranchRequest {
     name: string
     priceId: number
     location?: number
+    /** Days until the branch is deleted automatically. Omit for the default. */
+    expiresInDays?: number
 }
 
 /** A token as the list reports it. Carries no secret. */
@@ -277,6 +281,16 @@ export const api = {
      */
     deleteBranch: (instanceId: number | string, branchId: number | string) =>
         request<void>(`/api/instances/${instanceId}/branches/${branchId}`, { method: 'DELETE' }),
+
+    /**
+     * Sets how long a branch has left, or keeps it indefinitely with a null
+     * `expiresInDays`. Null is the explicit opt-out, not "no change".
+     */
+    setBranchExpiry: (instanceId: number | string, branchId: number | string, expiresInDays: number | null) =>
+        request<{ branchId: number; expiresAt: string | null }>(
+            `/api/instances/${instanceId}/branches/${branchId}/expiry`,
+            { method: 'PATCH', body: { expiresInDays } }
+        ),
 
     /** Makes a branch the cluster's default; the old default becomes a branch. */
     promoteBranch: (branchId: number | string) =>
