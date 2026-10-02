@@ -7,6 +7,7 @@ import { storageAutoscale, storageResize, storageShow } from './commands/storage
 import { login } from './commands/login.js'
 import { logout } from './commands/logout.js'
 import { whoami } from './commands/whoami.js'
+import { tryTrial } from './commands/try.js'
 import { tokensCreate, tokensList, tokensRevoke } from './commands/tokens.js'
 import { ApiError, NotAuthenticatedError } from './api.js'
 import { fail } from './output.js'
@@ -40,6 +41,14 @@ program
     .description('Remove the stored token from this machine (does not revoke it)')
     .action(async () => {
         await logout()
+    })
+
+program
+    .command('try')
+    .description('Get a Postgres database for the next hour: no account, no card')
+    .option('--json', 'Emit JSON on stdout')
+    .action(async (options) => {
+        await tryTrial(options)
     })
 
 program

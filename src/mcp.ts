@@ -806,6 +806,35 @@ export async function startMcpServer(): Promise<void> {
             })
     )
 
+    // Without a token, an agent in a fresh sandbox can still get a database. With one,
+    // it has an account and creates real instances instead.
+    if (!resolveToken())
+        server.registerTool(
+            'create_trial_database',
+            {
+                title: 'Create a free trial database',
+                description:
+                    'Creates a PostgreSQL database for the next 60 minutes, with no account or ' +
+                    'token. Returns a connection string and a claim URL. The connection stops ' +
+                    'working after connectUntil; the data is deleted after claimUntil unless the ' +
+                    'user opens the claim URL, signs up and adds a payment method, which moves the ' +
+                    'data into a database of their own. Give the claim URL to the user: it is shown ' +
+                    'once. Limits: 200 MB, 3 connections, 30-second statements, no superuser; ' +
+                    'trusted extensions such as pgcrypto work. At most 3 trials per network per day.',
+                annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+            },
+            async () =>
+                guarded(async () => {
+                    try {
+                        return await api.createTrial()
+                    } catch (error) {
+                        if (error && typeof error === 'object' && 'status' in error && error.status === 404)
+                            throw new Error("Trials aren't available right now. The user can sign up at https://zektor.io.")
+                        throw error
+                    }
+                })
+        )
+
     if (allowDestructive)
         server.registerTool(
             'delete_instance',

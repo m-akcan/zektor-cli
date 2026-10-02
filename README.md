@@ -57,6 +57,7 @@ environment variable is overriding the account you logged in as.
 
 | Command | What it does |
 |---|---|
+| `zektor try` | A Postgres database for the next hour, **no account needed** (see below) |
 | `zektor login` | Store a token for this machine |
 | `zektor logout` | Forget the stored token. Does **not** revoke it — the same token may be in use elsewhere. Revoke in Settings to end its access. |
 | `zektor whoami` | Show the account, API URL, and where the token came from |
@@ -70,6 +71,23 @@ environment variable is overriding the account you logged in as.
 | `zektor mcp` | Run as an MCP server, so an editor or agent can drive the API (see below) |
 
 Every read command takes `--json`.
+
+### Trying it without an account
+
+```sh
+psql "$(npx zektor try)"
+```
+
+`zektor try` prints a connection string on stdout and, on stderr, how long it works
+and a claim link. The database accepts connections for 60 minutes. Open the claim
+link within 3 hours, sign up and add a payment method, and the data moves into a
+database of your own; otherwise it is deleted. Up to 200 MB and 3 connections, no
+superuser (trusted extensions such as `pgcrypto` work), and 3 trials per network per
+day. `--json` prints all of it as JSON. The same is available without the CLI:
+
+```sh
+curl -X POST https://api.zektor.io/api/trial
+```
 
 ### Creating
 
@@ -137,6 +155,7 @@ For Claude Code, `claude mcp add zektor -- npx -y zektor mcp` does the same thin
 
 | Tool | |
 |---|---|
+| `create_trial_database` | only when **no token** is configured: a free database for an hour, with a claim link to give the user |
 | `whoami`, `list_instances`, `get_instance` | read-only |
 | `list_plans`, `list_regions` | read-only; call these before creating rather than guessing a name |
 | `get_connection` | read-only, **returns a live password** for caches |
