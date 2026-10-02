@@ -34,12 +34,14 @@ interface RequestOptions {
     body?: unknown
     /** Use this token instead of the stored one — `login` verifies before saving. */
     token?: string
+    /** Send no credential at all: the trial endpoints are for people without an account. */
+    anonymous?: boolean
 }
 
 export async function request<T>(path: string, options: RequestOptions = {}): Promise<T> {
-    const token = options.token ?? resolveToken()
+    const token = options.anonymous ? undefined : (options.token ?? resolveToken())
 
-    if (!token) throw new NotAuthenticatedError()
+    if (!token && !options.anonymous) throw new NotAuthenticatedError()
 
     const url = `${resolveApiUrl()}${path}`
 
@@ -48,7 +50,7 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
         response = await fetch(url, {
             method: options.method ?? 'GET',
             headers: {
-                Authorization: `Bearer ${token}`,
+                ...(token ? { Authorization: `Bearer ${token}` } : {}),
                 'Content-Type': 'application/json',
             },
             body: options.body === undefined ? undefined : JSON.stringify(options.body),
@@ -253,7 +255,30 @@ export interface CreateTokenRequest {
     instanceId?: number
 }
 
+/** `POST /api/trial`: a Postgres database for the next hour, no account needed. */
+export interface TrialDatabase {
+    connectionString: string
+    /** ISO time. The password stops working then; the data stays until `claimUntil`. */
+    connectUntil: string
+    /** Opening it (and signing up, with a payment method) keeps the database. Shown once. */
+    claimUrl: string
+    claimUntil: string
+}
+
+export interface TrialAvailability {
+    enabled: boolean
+    available: boolean
+    connectMinutes: number
+    claimHours: number
+    maxDatabaseMb: number
+}
+
 export const api = {
+    /** Anonymous. 404 while trials are off, 429 past the daily cap per network, 503 when full. */
+    createTrial: () => request<TrialDatabase>('/api/trial', { method: 'POST', anonymous: true }),
+
+    trialAvailability: () => request<TrialAvailability>('/api/trial/availability', { anonymous: true }),
+
     me: (token?: string) => request<Me>('/api/auth/me', { token }),
 
     listInstances: () => request<Instance[]>('/api/instances'),
