@@ -842,6 +842,13 @@ export async function startMcpServer(): Promise<void> {
                 if (Object.keys(settings).length === 0)
                     throw new Error('Nothing to change. Pass at least one of enabled, limit_gb, minimum_gb, up_only.')
 
+                // Same check as the CLI: only the case resize_storage can fix.
+                if (!instance.volumes?.length && instance.volumeStorageAvailable !== false)
+                    throw new Error(
+                        `${instance.name} has no storage volume yet, so there is nothing to autoscale. ` +
+                            'Add one with resize_storage (10 GB or more), then try again.'
+                    )
+
                 await api.updateStorageSettings(id, settings)
 
                 const after = await api.getInstance(id)

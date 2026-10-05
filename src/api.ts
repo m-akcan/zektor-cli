@@ -231,6 +231,8 @@ export interface Instance {
     pricingTier: PricingTier
     /** For an instance in error, why creating it failed. Absent on older APIs. */
     failureMessage?: string | null
+    /** False where the API refuses a volume (a CNPG-managed Postgres). Absent on older APIs. */
+    volumeStorageAvailable?: boolean
 
     // Postgres storage. Absent on caches, which have no volume of their own.
     dbStorageLimitMb?: number

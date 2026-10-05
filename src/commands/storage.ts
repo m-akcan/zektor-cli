@@ -172,6 +172,14 @@ export async function storageAutoscale(
     if (Object.keys(settings).length === 0)
         fail('Nothing to change. Pass --on, --off, --limit, --min or --up-only.')
 
+    // The API refuses these settings without a volume. Where a volume can't be
+    // added at all, its own refusal says so, so only the fixable case is caught.
+    if (!instance.volumes?.length && instance.volumeStorageAvailable !== false)
+        fail(
+            `${instance.name} has no storage volume yet, so there is nothing to autoscale. ` +
+                `Add one with \`zektor storage resize ${instance.id} --size 10\`, then try again.`
+        )
+
     await api.updateStorageSettings(id, settings)
 
     if (opts.json) {
