@@ -1,4 +1,4 @@
-import { resolveApiUrl, resolveToken } from './config.js'
+import { configPath, DEFAULT_API_URL, resolveApiUrl, resolveToken, tokenIsFromEnv } from './config.js'
 
 /**
  * Thin fetch wrapper over the handful of endpoints the CLI uses.
@@ -55,29 +55,125 @@ export async function request<T>(path: string, options: RequestOptions = {}): Pr
             },
             body: options.body === undefined ? undefined : JSON.stringify(options.body),
         })
-    } catch (cause) {
-        // A DNS failure or refused connection is not an API error, and saying
-        // "request failed" without the URL sends people hunting in the wrong place.
-        throw new ApiError(0, `Could not reach ${resolveApiUrl()} — ${(cause as Error).message}`)
+    } catch (error) {
+        // fetch only ever says "fetch failed"; the reason (ENOTFOUND, ECONNREFUSED, a
+        // certificate error) is on its cause. The URL is named only when someone set
+        // it, since a typo in ZEKTOR_API_URL is the likeliest cause then.
+        const cause = (error as { cause?: { code?: string; message?: string } }).cause
+        const reason = cause?.code ?? cause?.message ?? (error as Error).message
+        const base = resolveApiUrl()
+        const at = base === DEFAULT_API_URL ? '' : ` at ${base}`
+        throw new ApiError(0, `Can't reach the Zektor API${at} (${reason}). Check your connection.`)
     }
 
-    if (response.status === 401)
-        throw new ApiError(401, 'Token rejected. It may have been revoked — check Settings.')
-
-    // The API answers 404 for an id that is gone as well as one that was never
-    // yours, so the message cannot promise which — but "not found" beats the
-    // bare status line a caller would otherwise print.
-    if (response.status === 404)
-        throw new ApiError(404, `Not found: ${path.replace(/^\/api/, '')}`)
-
-    if (!response.ok) {
-        const text = await response.text().catch(() => '')
-        throw new ApiError(response.status, text.trim() || `${response.status} ${response.statusText}`)
-    }
+    if (!response.ok) throw new ApiError(response.status, await describeFailure(response, path, options))
 
     if (response.status === 204) return undefined as T
 
     return (await response.json()) as T
+}
+
+/**
+ * One plain sentence for a failed response, whatever its body looks like.
+ *
+ * The API answers with plain text, JSON carrying `message`/`error`, or an ASP.NET
+ * ProblemDetails or validation body. Cloudflare and Caddy in front of it answer
+ * with an HTML page or nothing at all. Only a sentence written for a person is
+ * passed on: never an HTML page, a stack trace or the request's route.
+ */
+async function describeFailure(response: Response, path: string, options: RequestOptions): Promise<string> {
+    const status = response.status
+    const body = (await response.text().catch(() => '')).trim()
+    const html = /html/i.test(response.headers.get('content-type') ?? '') || body.startsWith('<')
+
+    // 502, 504 and 52x only ever come from the proxies. A 503 can be the API's own
+    // ("trials are full"), so it counts as an outage only without a body of its own.
+    const gateway = status === 502 || status === 504 || (status >= 520 && status <= 530)
+
+    if (html || gateway || (status === 503 && !body))
+        return `Zektor's API is not responding right now (HTTP ${status}). This is on our side; try again in a few minutes.`
+
+    if (status === 401) return rejectedToken(options)
+
+    const text = sentence(body)
+
+    if (status === 403) {
+        if (!text)
+            return "This token isn't allowed to do that. If it is missing a scope, create a token that has it under Settings → Access tokens."
+
+        // The API's own scope refusal already says where to get one.
+        return /scope/i.test(text) && !/access tokens/i.test(text)
+            ? `${text.replace(/([^.!?])$/, '$1.')} Create a token with that scope under Settings → Access tokens.`
+            : text
+    }
+
+    // "Not found." alone is what a token pinned to another instance gets, by design.
+    if (status === 404) return text && !/^not found\.?$/i.test(text) ? text : notFound(path)
+
+    if (status === 429) {
+        if (text) return text
+        const seconds = Number(response.headers.get('retry-after'))
+        return seconds > 0
+            ? `Too many requests. Try again in ${Math.ceil(seconds / 60)} minute(s).`
+            : 'Too many requests. Try again later.'
+    }
+
+    return text || `The request failed (HTTP ${status}).`
+}
+
+/** The body's message: plain text as is, JSON reduced to its one human-readable field. */
+function sentence(body: string): string {
+    if (!/^[{["]/.test(body)) return body
+
+    let json: unknown
+    try {
+        json = JSON.parse(body)
+    } catch {
+        return body
+    }
+
+    if (typeof json === 'string') return json
+    if (!json || typeof json !== 'object') return ''
+
+    const fields = json as Record<string, unknown>
+
+    for (const key of ['message', 'error', 'detail']) {
+        const value = fields[key]
+        if (typeof value === 'string' && value) return value
+    }
+
+    // Validation errors: nested under "errors" in ProblemDetails, at the top level
+    // from BadRequest(ModelState). Either way, field name → list of messages.
+    const errors = fields.errors && typeof fields.errors === 'object' ? fields.errors : fields
+    for (const value of Object.values(errors))
+        if (Array.isArray(value) && typeof value[0] === 'string') return value[0]
+
+    return ''
+}
+
+/** A 401 says nothing about which token, and that is the part people get wrong. */
+function rejectedToken(options: RequestOptions): string {
+    if (options.token)
+        return 'That token was rejected: it is invalid, expired or revoked. Check that you pasted all of it, or create a new one under Settings → Access tokens.'
+
+    if (tokenIsFromEnv())
+        return 'The token in ZEKTOR_TOKEN is invalid, expired or revoked. Create a new one under Settings → Access tokens and put it in ZEKTOR_TOKEN, or unset ZEKTOR_TOKEN and run `zektor login`.'
+
+    return `The token saved in ${configPath()} is invalid, expired or revoked. Create a new one under Settings → Access tokens and run \`zektor login\` again.`
+}
+
+/**
+ * Names what a bare 404 was about without printing the route. The API answers 404
+ * for an id that is gone, one that was never yours, and anything outside a pinned
+ * token's instance, so the message cannot say which.
+ */
+function notFound(path: string): string {
+    const [resource, id] = path.replace(/^\/api\//, '').split(/[/?]/)
+    const nouns: Record<string, string> = { instances: 'instance', tokens: 'token', actions: 'background task' }
+    const noun = nouns[resource ?? '']
+    const what = noun && id && /^\d+$/.test(id) ? `No ${noun} #${id} was found on this account.` : 'Not found on this account.'
+
+    return `${what} If this token is pinned to one instance, it can reach only that instance.`
 }
 
 /** Shape of `GET /api/auth/me` — only the fields the CLI actually reads. */

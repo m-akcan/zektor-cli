@@ -1,5 +1,5 @@
 import { createInterface } from 'node:readline'
-import { api, ApiError } from '../api.js'
+import { api } from '../api.js'
 import { readConfig, tokenIsFromEnv, writeConfig } from '../config.js'
 import { fail, info, warn } from '../output.js'
 
@@ -55,9 +55,7 @@ export async function login(options: { token?: string }): Promise<void> {
     try {
         me = await api.me(token)
     } catch (error) {
-        if (error instanceof ApiError && error.status === 401)
-            fail('That token was rejected. Check you pasted it whole, and that it is not revoked.')
-
+        // A 401 here already reads "That token was rejected: … invalid, expired or revoked".
         fail(error instanceof Error ? error.message : String(error))
     }
 
