@@ -2,6 +2,7 @@ import { createInterface } from 'node:readline/promises'
 import { api } from '../api.js'
 import { resolveTier } from '../resolve.js'
 import { data, fail, info } from '../output.js'
+import { waitForAction } from '../wait.js'
 
 /**
  * `zektor scale <id> --tier=<plan>`.
@@ -12,7 +13,7 @@ import { data, fail, info } from '../output.js'
  */
 export async function scale(
     id: string,
-    opts: { tier?: string; yes?: boolean; json?: boolean }
+    opts: { tier?: string; yes?: boolean; json?: boolean; wait?: boolean }
 ): Promise<void> {
     if (!opts.tier) fail('--tier is required. Run with a wrong value to see the available plans.')
 
@@ -56,10 +57,19 @@ export async function scale(
 
     const action = await api.scaleInstance(id, target.id, upScale, current.product)
 
-    if (opts.json) {
-        data({ instanceId: instance.id, actionId: action.id, from: current.name, to: target.name, upScale }, true)
-        return
+    // A failed scale leaves the plan as it was, so `zektor show` alone never
+    // reveals one. --wait reads the outcome from the action.
+    if (!opts.json)
+        info(
+            `${direction} ${instance.name}: ${current.name} → ${target.name}.` +
+                (opts.wait ? '' : ' It runs in the background; pass --wait to see how it ends.')
+        )
+
+    if (opts.wait) {
+        await waitForAction(action.id, `${direction} ${instance.name} to ${target.name}`)
+        if (!opts.json) info(`${instance.name} is now on ${target.name}.`)
     }
 
-    info(`${direction} ${instance.name}: ${current.name} → ${target.name}. Watch it with \`zektor show ${id}\`.`)
+    if (opts.json)
+        data({ instanceId: instance.id, actionId: action.id, from: current.name, to: target.name, upScale }, true)
 }

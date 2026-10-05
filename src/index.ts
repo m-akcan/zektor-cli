@@ -69,6 +69,7 @@ function addCreate(parent: Command, group: 'database' | 'cache') {
         .option('--engine <engine>', 'Engine and optional version, e.g. postgres@17')
         .option('--region <region>', 'Region name or city')
         .option('--storage <storage>', 'Not supported — storage comes from the plan')
+        .option('--wait', 'Wait until it is ready; exit non-zero if creating it fails')
         .option('--json', 'Emit JSON on stdout')
         .action(async (options) => {
             await create(group, options)
@@ -110,6 +111,7 @@ program
     .description('Move an instance to another plan')
     .requiredOption('--tier <plan>', 'Target plan, e.g. AKPG-10')
     .option('--yes', 'Skip the confirmation prompt')
+    .option('--wait', 'Wait until the move has finished; exit non-zero if it fails')
     .option('--json', 'Emit JSON on stdout')
     .action(async (id, options) => {
         await scale(id, options)
@@ -131,6 +133,7 @@ storage
     .command('resize <id>')
     .description('Grow the volume. Volumes cannot shrink.')
     .requiredOption('--size <gb>', 'New size in whole gigabytes')
+    .option('--wait', 'Wait until the change has finished; exit non-zero if it fails')
     .option('--json', 'Emit JSON on stdout')
     .action(async (id, options) => {
         await storageResize(id, options)

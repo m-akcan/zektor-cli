@@ -1,6 +1,7 @@
 import { api } from '../api.js'
 import { resolveEngine, resolveLocation, resolveTier } from '../resolve.js'
 import { data, fail, info } from '../output.js'
+import { waitForAction } from '../wait.js'
 
 /**
  * `zektor db create` / `zektor cache create`.
@@ -21,6 +22,7 @@ interface CreateOptions {
     tier?: string
     storage?: string
     json?: boolean
+    wait?: boolean
 }
 
 export async function create(group: 'database' | 'cache', opts: CreateOptions): Promise<void> {
@@ -47,13 +49,19 @@ export async function create(group: 'database' | 'cache', opts: CreateOptions): 
         dockerImageId,
     })
 
+    // Provisioning is asynchronous and takes under a minute; say so rather than
+    // implying the instance is ready to connect to.
+    if (!opts.json) info(`Creating ${opts.name} (#${result.instanceId}) on ${tier.name}.`)
+
+    if (opts.wait) {
+        await waitForAction(result.actionId, `Creating ${opts.name}`)
+        if (!opts.json) info(`${opts.name} is ready.`)
+    }
+
     if (opts.json) {
         data({ instanceId: result.instanceId, actionId: result.actionId, name: opts.name }, true)
         return
     }
 
-    // Provisioning is asynchronous and takes under a minute; say so rather than
-    // implying the instance is ready to connect to.
-    info(`Creating ${opts.name} (#${result.instanceId}) on ${tier.name}.`)
     data(String(result.instanceId), false)
 }

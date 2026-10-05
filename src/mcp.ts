@@ -148,9 +148,12 @@ export async function startMcpServer(): Promise<void> {
                 'Instances are addressed by numeric id — call list_instances to find one. ' +
                 'A plan ("pricing tier") fixes the engine, memory, storage and price, so ' +
                 'creating an instance means choosing a plan with list_plans rather than ' +
-                'specifying resources individually. Provisioning is asynchronous and takes ' +
-                'about a minute; create_instance returns as soon as the work is queued, and ' +
-                'the instance is usable when its status reads "active".\n\n' +
+                'specifying resources individually.\n\n' +
+                'Creating, scaling and resizing storage run in the background. create_instance, ' +
+                'scale_instance and resize_storage return an actionId as soon as the work is ' +
+                'queued; poll get_action with it until status is "Success" or "Failure". On ' +
+                'Failure, errorMessage says why. A new instance is usable once its status reads ' +
+                '"active"; creating takes about a minute.\n\n' +
                 'Storage tools apply to PostgreSQL only. PostgreSQL passwords are never ' +
                 'retrievable: they are shown once when a role is created or rotated and are ' +
                 'not stored, so get_connection returns a usable connection string for caches ' +
@@ -209,6 +212,39 @@ export async function startMcpServer(): Promise<void> {
             annotations: { readOnlyHint: true, openWorldHint: true },
         },
         async ({ id }) => guarded(async () => detail(await api.getInstance(id)))
+    )
+
+    server.registerTool(
+        'get_action',
+        {
+            title: 'Check background work',
+            description:
+                'How the background work started by create_instance, scale_instance or ' +
+                'resize_storage is going, by the actionId they return. status is "Running", ' +
+                '"Success" or "Failure"; on Failure, errorMessage says why. While it is Running, ' +
+                'call this again every few seconds.',
+            inputSchema: {
+                action_id: z.coerce
+                    .number()
+                    .int()
+                    .positive()
+                    .describe('actionId from create_instance, scale_instance or resize_storage'),
+            },
+            annotations: { readOnlyHint: true, openWorldHint: true },
+        },
+        async ({ action_id }) =>
+            guarded(async () => {
+                const action = await api.getAction(action_id)
+                return {
+                    actionId: action.id,
+                    command: action.command,
+                    status: action.status,
+                    progress: action.progress,
+                    errorMessage: action.errorMessage || null,
+                    startedAt: action.startedAt,
+                    finishedAt: action.finishedAt ?? null,
+                }
+            })
     )
 
     server.registerTool(
@@ -326,9 +362,10 @@ export async function startMcpServer(): Promise<void> {
             description:
                 'Provisions a database or cache. THIS COSTS MONEY — the plan is billed monthly ' +
                 'from creation until the instance is deleted.\n\n' +
-                'Storage is not a parameter: it comes with the plan. Provisioning is ' +
-                'asynchronous, so this returns an instance id immediately and the instance ' +
-                'becomes usable when get_instance reports status "active".',
+                'Storage is not a parameter: it comes with the plan. Creating runs in the ' +
+                'background, so this returns an instance id and an actionId immediately. Poll ' +
+                'get_action with the actionId until it reports "Success" (the instance is then ' +
+                '"active") or "Failure".',
             inputSchema: {
                 group: z.enum(['database', 'cache']).describe('database for PostgreSQL, cache for Valkey/Redis'),
                 name: z.string().min(1).describe('Instance name'),
@@ -364,11 +401,14 @@ export async function startMcpServer(): Promise<void> {
 
                 return {
                     instanceId: result.instanceId,
+                    actionId: result.actionId,
                     name,
                     plan: plan.name,
                     monthlyPriceEur: plan.monthlyPriceEur,
-                    status: 'provisioning',
-                    note: 'Provisioning takes about a minute. Poll get_instance until status is "active".',
+                    status: 'creating',
+                    note:
+                        'Queued, not done. Creating takes about a minute. Poll get_action with actionId ' +
+                        'until status is "Success" or "Failure"; on Failure, errorMessage says why.',
                 }
             })
     )
@@ -411,15 +451,20 @@ export async function startMcpServer(): Promise<void> {
                 // sideways move is not treated as a downgrade.
                 const upScale = target.monthlyPriceEur >= current.monthlyPriceEur
 
-                await api.scaleInstance(id, target.id, upScale, current.product)
+                const action = await api.scaleInstance(id, target.id, upScale, current.product)
 
                 return {
                     instanceId: instance.id,
+                    actionId: action.id,
                     from: current.name,
                     to: target.name,
                     direction: upScale ? 'up' : 'down',
                     monthlyPriceEur: target.monthlyPriceEur,
-                    note: 'Scaling is asynchronous. Watch get_instance for the new plan.',
+                    status: 'queued',
+                    note:
+                        'Queued, not done. Poll get_action with actionId until status is "Success" or ' +
+                        '"Failure"; on Failure, errorMessage says why. A failed move leaves the plan ' +
+                        'unchanged, so get_instance alone never shows it.',
                 }
             })
     )
@@ -754,13 +799,20 @@ export async function startMcpServer(): Promise<void> {
                 if (volume && size_gb === volume.sizeInGb)
                     throw new Error(`${instance.name} is already at ${size_gb} GB.`)
 
-                await (volume ? api.resizeVolume(volume.id, size_gb) : api.createVolume(instance.id, size_gb))
+                const action = await (volume
+                    ? api.resizeVolume(volume.id, size_gb)
+                    : api.createVolume(instance.id, size_gb))
 
                 return {
                     instanceId: instance.id,
+                    actionId: action.id,
                     sizeGb: size_gb,
                     created: !volume,
                     previousSizeGb: volume?.sizeInGb ?? null,
+                    status: 'queued',
+                    note:
+                        'Queued, not done. Poll get_action with actionId until status is "Success" or ' +
+                        '"Failure"; on Failure, errorMessage says why.',
                 }
             })
     )

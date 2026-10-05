@@ -245,6 +245,34 @@ export interface ActionResult {
     id: number
 }
 
+/** `GET /api/actions/{id}`: how background work started by create, scale or a storage change went. */
+export interface Action {
+    id: number
+    command: string
+    status: 'Running' | 'Success' | 'Failure'
+    progress: number
+    /** Why it failed, written for the customer. Set on Failure, and may be empty. */
+    errorMessage?: string | null
+    startedAt: string
+    finishedAt?: string | null
+}
+
+// The API sends both enums as numbers. These are their names, in order.
+const ACTION_STATUSES = ['Running', 'Success', 'Failure'] as const
+const ACTION_COMMANDS = [
+    'InstanceCreation',
+    'InstanceScale',
+    'VolumeCreation',
+    'VolumeScale',
+    'VolumeAdminMigration',
+    'BackupCreate',
+    'BackupRestore',
+]
+
+/** A name for an enum value, whether the API sent the number or the name itself. */
+const enumName = (names: readonly string[], value: number | string) =>
+    typeof value === 'number' ? (names[value] ?? String(value)) : value
+
 export interface StorageSettings {
     enableAutoScale?: boolean
     autoScaleUpOnly?: boolean
@@ -491,4 +519,15 @@ export const api = {
 
     updateStorageSettings: (id: number | string, settings: StorageSettings) =>
         request<Instance>(`/api/instances/${id}/storage`, { method: 'PATCH', body: settings }),
+
+    getAction: async (id: number | string): Promise<Action> => {
+        const action = await request<Omit<Action, 'status' | 'command'> & { status: number | string; command: number | string }>(
+            `/api/actions/${id}`
+        )
+        return {
+            ...action,
+            status: enumName(ACTION_STATUSES, action.status) as Action['status'],
+            command: enumName(ACTION_COMMANDS, action.command),
+        }
+    },
 }

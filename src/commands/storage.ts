@@ -1,5 +1,6 @@
 import { api, type Instance } from '../api.js'
 import { data, fail, info } from '../output.js'
+import { waitForAction } from '../wait.js'
 
 /**
  * Storage commands. Postgres only — a cache has no volume of its own, and the
@@ -77,7 +78,7 @@ export async function storageShow(id: string, opts: { json?: boolean }): Promise
  */
 export async function storageResize(
     id: string,
-    opts: { size?: string; json?: boolean }
+    opts: { size?: string; json?: boolean; wait?: boolean }
 ): Promise<void> {
     const size = Number(opts.size)
 
@@ -102,16 +103,18 @@ export async function storageResize(
         ? await api.resizeVolume(volume.id, size)
         : await api.createVolume(instance.id, size)
 
-    if (opts.json) {
-        data({ instanceId: instance.id, actionId: action.id, sizeGb: size, created: !volume }, true)
-        return
+    const what = volume
+        ? `Resizing ${instance.name} from ${volume.sizeInGb} GB to ${size} GB`
+        : `Creating a ${size} GB volume for ${instance.name}`
+
+    if (!opts.json) info(`${what}.`)
+
+    if (opts.wait) {
+        await waitForAction(action.id, what)
+        if (!opts.json) info(`${instance.name} now has ${size} GB of storage.`)
     }
 
-    info(
-        volume
-            ? `Resizing ${instance.name} from ${volume.sizeInGb} GB to ${size} GB.`
-            : `Creating a ${size} GB volume for ${instance.name}.`
-    )
+    if (opts.json) data({ instanceId: instance.id, actionId: action.id, sizeGb: size, created: !volume }, true)
 }
 
 /**
