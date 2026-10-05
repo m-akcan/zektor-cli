@@ -285,7 +285,7 @@ export interface StorageSettings {
 
 export interface CreateInstanceRequest {
     name: string
-    location?: number
+    location: number
     priceId: number
     dockerImageId?: number
 }

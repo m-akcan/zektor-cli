@@ -367,7 +367,7 @@ export async function startMcpServer(): Promise<void> {
                 group: z.enum(['database', 'cache']).describe('database for PostgreSQL, cache for Valkey/Redis'),
                 name: z.string().min(1).describe('Instance name'),
                 tier: z.string().describe('Plan name from list_plans, e.g. AKPG-5'),
-                region: z.string().optional().describe('Region name or city from list_regions. Omit for the default.'),
+                region: z.string().describe('Region name (e.g. fsn1) or city from list_regions. Required: there is no default.'),
                 engine: z
                     .string()
                     .optional()
@@ -387,7 +387,7 @@ export async function startMcpServer(): Promise<void> {
                     engine && !engine.includes('@') ? `${plan.product}@${engine}` : engine
                 )
 
-                const location = region ? resolveLocation(await api.listLocations(), region) : undefined
+                const location = resolveLocation(await api.listLocations(), region)
 
                 const result = await api.createInstance({
                     name,

@@ -1,5 +1,5 @@
 import { api } from '../api.js'
-import { resolveEngine, resolveLocation, resolveTier } from '../resolve.js'
+import { options, resolveEngine, resolveLocation, resolveTier } from '../resolve.js'
 import { data, fail, info } from '../output.js'
 import { waitForAction } from '../wait.js'
 
@@ -33,14 +33,30 @@ export async function create(group: 'database' | 'cache', opts: CreateOptions): 
         )
 
     if (!opts.name) fail('--name is required.')
-    if (!opts.tier) fail('--tier is required. Run with a wrong value to see the available plans.')
 
-    const tier = resolveTier(await api.listTiers(), group, opts.tier)
+    const tiers = await api.listTiers()
+
+    if (!opts.tier)
+        fail(
+            `--tier is required. ${group === 'database' ? 'Database' : 'Cache'} plans: ${options(
+                tiers.filter((t) => t.productGroup === group).map((t) => `${t.name} (€${t.monthlyPriceEur}/mo)`)
+            )}`
+        )
+
+    const tier = resolveTier(tiers, group, opts.tier)
     const dockerImageId = resolveEngine(tier, opts.engine)
 
-    const location = opts.region
-        ? resolveLocation(await api.listLocations(), opts.region)
-        : undefined
+    // The API has no default region, so asking here beats its 400.
+    const locations = await api.listLocations()
+
+    if (!opts.region)
+        fail(
+            `--region is required. Available regions: ${options(
+                locations.filter((l) => l.rentingAvailable).map((l) => `${l.name} (${l.city})`)
+            )}`
+        )
+
+    const location = resolveLocation(locations, opts.region)
 
     const result = await api.createInstance({
         name: opts.name,
