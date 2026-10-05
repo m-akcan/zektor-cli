@@ -767,11 +767,12 @@ export async function startMcpServer(): Promise<void> {
     server.registerTool(
         'resize_storage',
         {
-            title: 'Grow storage',
+            title: 'Resize storage',
             description:
-                'Grows the volume of a PostgreSQL instance, creating one if it has none. ' +
-                'ONE WAY: volumes cannot shrink, so the new size is a floor on what the ' +
-                'instance costs from now on. Creates the volume when the instance has none yet.',
+                'Grows or shrinks the volume of a PostgreSQL instance, creating one if it has ' +
+                'none. Storage is billed by size. A shrink is recorded at once and the data ' +
+                'moves to the smaller volume at 2 AM UTC, so pick a size that holds what the ' +
+                'instance stores (get_storage shows usage).',
             inputSchema: {
                 id: instanceId,
                 size_gb: z.coerce.number().int().positive().describe('New size in whole gigabytes'),
@@ -782,12 +783,6 @@ export async function startMcpServer(): Promise<void> {
             guarded(async () => {
                 const instance = await postgresInstance(id)
                 const volume = instance.volumes?.[0]
-
-                if (volume && size_gb < volume.sizeInGb)
-                    throw new Error(
-                        `Cannot shrink storage: ${instance.name} is on ${volume.sizeInGb} GB and ` +
-                            `volumes only grow. Pick a size above ${volume.sizeInGb}.`
-                    )
 
                 if (volume && size_gb === volume.sizeInGb)
                     throw new Error(`${instance.name} is already at ${size_gb} GB.`)
@@ -805,7 +800,10 @@ export async function startMcpServer(): Promise<void> {
                     status: 'queued',
                     note:
                         'Queued, not done. Poll get_action with actionId until status is "Success" or ' +
-                        '"Failure"; on Failure, errorMessage says why.',
+                        '"Failure"; on Failure, errorMessage says why.' +
+                        (volume && size_gb < volume.sizeInGb
+                            ? ' After Success the data still moves to the smaller volume at 2 AM UTC.'
+                            : ''),
                 }
             })
     )

@@ -74,7 +74,8 @@ export async function storageShow(id: string, opts: { json?: boolean }): Promise
  * `zektor storage resize <id> --size=<gb>`.
  *
  * Creates the volume when the instance has none yet, resizes it otherwise —
- * the same branch the dashboard takes.
+ * the same branch the dashboard takes. A shrink takes effect on the bill at
+ * once; the API moves the data to the smaller volume at 2 AM UTC.
  */
 export async function storageResize(
     id: string,
@@ -88,14 +89,6 @@ export async function storageResize(
     const instance = await postgresInstance(id)
     const volume = instance.volumes?.[0]
 
-    // Hetzner volumes cannot shrink. Saying so is more useful than relaying
-    // whatever error the provider returns three layers down.
-    if (volume && size < volume.sizeInGb)
-        fail(
-            `Cannot shrink storage: ${instance.name} is on ${volume.sizeInGb} GB and volumes only grow. ` +
-                `Pick a size above ${volume.sizeInGb}.`
-        )
-
     if (volume && size === volume.sizeInGb)
         fail(`${instance.name} is already at ${size} GB.`)
 
@@ -103,11 +96,12 @@ export async function storageResize(
         ? await api.resizeVolume(volume.id, size)
         : await api.createVolume(instance.id, size)
 
+    const shrink = volume !== undefined && size < volume.sizeInGb
     const what = volume
-        ? `Resizing ${instance.name} from ${volume.sizeInGb} GB to ${size} GB`
+        ? `${shrink ? 'Shrinking' : 'Resizing'} ${instance.name} from ${volume.sizeInGb} GB to ${size} GB`
         : `Creating a ${size} GB volume for ${instance.name}`
 
-    if (!opts.json) info(`${what}.`)
+    if (!opts.json) info(`${what}.${shrink ? ' The data moves to the smaller volume at 2 AM UTC.' : ''}`)
 
     if (opts.wait) {
         await waitForAction(action.id, what)

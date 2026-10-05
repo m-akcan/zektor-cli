@@ -131,7 +131,7 @@ storage
 
 storage
     .command('resize <id>')
-    .description('Grow the volume. Volumes cannot shrink.')
+    .description('Grow or shrink the volume. A shrink moves the data at 2 AM UTC.')
     .requiredOption('--size <gb>', 'New size in whole gigabytes')
     .option('--wait', 'Wait until the change has finished; exit non-zero if it fails')
     .option('--json', 'Emit JSON on stdout')
