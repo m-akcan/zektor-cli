@@ -1,7 +1,6 @@
 import { spawn } from 'node:child_process'
-import { createInterface } from 'node:readline/promises'
 import { api } from '../api.js'
-import { data, fail, info } from '../output.js'
+import { ask, data, fail, info } from '../output.js'
 import { whyNotActive } from '../status.js'
 
 /** `zektor list` — one line per instance, or JSON. */
@@ -63,11 +62,9 @@ export async function remove(id: string, opts: { yes?: boolean }): Promise<void>
         if (!process.stdin.isTTY)
             fail('Refusing to delete without a terminal to confirm at. Pass --yes if you mean it.')
 
-        const rl = createInterface({ input: process.stdin, output: process.stderr })
-        const answer = await rl.question(
+        const answer = await ask(
             `This deletes "${instance.name}" (#${instance.id}) and its data. Type the name to confirm: `
         )
-        rl.close()
 
         if (answer.trim() !== instance.name) fail('Name did not match. Nothing was deleted.')
     }

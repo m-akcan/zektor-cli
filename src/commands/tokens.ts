@@ -1,6 +1,5 @@
-import { createInterface } from 'node:readline/promises'
 import { api, type ApiTokenSummary } from '../api.js'
-import { data, fail, info, warn } from '../output.js'
+import { ask, data, fail, info, warn } from '../output.js'
 
 /**
  * Valid scopes, duplicated from the backend on purpose.
@@ -128,11 +127,9 @@ export async function tokensRevoke(id: string, options: { yes?: boolean }): Prom
             fail('Refusing to revoke without a terminal to confirm at. Pass --yes if you mean it.')
 
         const also = descendants > 0 ? ` and ${descendants} token(s) minted by it` : ''
-        const rl = createInterface({ input: process.stdin, output: process.stderr })
-        const answer = await rl.question(
+        const answer = await ask(
             `This revokes "${token.name}" (#${token.id})${also}. Type the name to confirm: `
         )
-        rl.close()
 
         if (answer.trim() !== token.name) fail('Name did not match. Nothing was revoked.')
     }

@@ -1,7 +1,6 @@
-import { createInterface } from 'node:readline/promises'
 import { api } from '../api.js'
 import { resolveTier } from '../resolve.js'
-import { data, fail, info } from '../output.js'
+import { ask, data, fail, info } from '../output.js'
 import { waitForAction } from '../wait.js'
 
 /**
@@ -36,8 +35,6 @@ export async function scale(
         if (!process.stdin.isTTY)
             fail('Refusing to scale without a terminal to confirm at. Pass --yes if you mean it.')
 
-        const rl = createInterface({ input: process.stdin, output: process.stderr })
-
         // Downgrades are the dangerous direction: less memory or storage than the
         // instance may currently be using, so name that rather than asking a bland
         // "are you sure".
@@ -46,11 +43,10 @@ export async function scale(
             : '\nThis reduces the resources available to a running instance. If it is using more ' +
               'than the smaller plan provides, that is a problem you will meet during the move.\n'
 
-        const answer = await rl.question(
+        const answer = await ask(
             `${warning}${direction} ${instance.name} from ${current.name} (€${current.monthlyPriceEur}/mo) ` +
                 `to ${target.name} (€${target.monthlyPriceEur}/mo). Type the instance name to confirm: `
         )
-        rl.close()
 
         if (answer.trim() !== instance.name) fail('Name did not match. Nothing was changed.')
     }
