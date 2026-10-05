@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process'
+import { constants } from 'node:os'
 import { api } from '../api.js'
 import { ask, data, fail, info } from '../output.js'
 import { whyNotActive } from '../status.js'
@@ -129,5 +130,9 @@ export async function connect(id: string): Promise<void> {
     })
 
     // Pass the client's exit code through, so scripts see what really happened.
-    child.on('exit', (code) => process.exit(code ?? 0))
+    // A signal leaves no code; exit as a shell would (128 + signal), not with 0.
+    child.on('exit', (code, signal) => {
+        if (signal) fail(`${command} was ended by ${signal}.`, 128 + (constants.signals[signal] ?? 0))
+        process.exit(code ?? 1)
+    })
 }
