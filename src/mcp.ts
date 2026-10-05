@@ -5,6 +5,7 @@ import { api, type Instance } from './api.js'
 import { resolveApiUrl, resolveToken, tokenIsFromEnv } from './config.js'
 import { VERSION } from './version.js'
 import { imageVersion, resolveEngine, resolveLocation, resolveTier } from './resolve.js'
+import { whyNotActive } from './status.js'
 
 /**
  * `zektor mcp` — the same API as the CLI, exposed to an MCP client.
@@ -323,11 +324,7 @@ export async function startMcpServer(): Promise<void> {
             guarded(async () => {
                 const instance = await api.getInstance(id)
 
-                if (instance.status !== 'active')
-                    throw new Error(
-                        `${instance.name} is ${instance.status}, not active. ` +
-                            'Connection details exist once provisioning has finished.'
-                    )
+                if (instance.status !== 'active') throw new Error(whyNotActive(instance))
 
                 const connection = await api.getConnection(id)
 
@@ -711,11 +708,7 @@ export async function startMcpServer(): Promise<void> {
                             'already returns a usable connection string.'
                     )
 
-                if (instance.status !== 'active')
-                    throw new Error(
-                        `${instance.name} is ${instance.status}, not active. Roles can be created ` +
-                            'once provisioning has finished.'
-                    )
+                if (instance.status !== 'active') throw new Error(whyNotActive(instance))
 
                 // Unique by default. A fixed name collides on the second call, and a model
                 // retrying a failed step should not get "a role named agent already exists".

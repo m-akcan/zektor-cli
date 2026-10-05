@@ -229,6 +229,8 @@ export interface Instance {
     location: string
     connectionString: string
     pricingTier: PricingTier
+    /** For an instance in error, why creating it failed. Absent on older APIs. */
+    failureMessage?: string | null
 
     // Postgres storage. Absent on caches, which have no volume of their own.
     dbStorageLimitMb?: number
