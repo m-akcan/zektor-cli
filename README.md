@@ -96,7 +96,11 @@ zektor db create --name=my-db --tier=AKPG-5 --region=nbg1 --engine=postgres@17
 ```
 
 `--tier`, `--region` and `--engine` take the names you see in the dashboard and
-are resolved to ids for you. Pass a wrong one and the error lists what is valid.
+are resolved to ids for you. `--tier` and `--region` are required; leave one out
+or pass a wrong one and the error lists what is valid.
+
+Creating runs in the background. Add `--wait` to block until the instance is
+ready; if creating it fails, the command prints why and exits non-zero.
 
 `--storage` appears in the dashboard's "equivalent CLI" panel but is rejected
 here: the wizard's own create call does not send it, and storage comes from the
@@ -122,8 +126,14 @@ zektor storage autoscale 42 --on --limit=100
 `--yes` skips that. A downgrade warns that the smaller plan may be below what
 the instance is currently using.
 
+`scale` and `storage resize` run in the background too, and take `--wait`: it
+blocks until the change has finished, and on failure prints the reason and
+exits non-zero. Without it, a failed scale is easy to miss, since the instance
+simply stays on its old plan.
+
 Storage is **PostgreSQL only** — a cache is sized by its plan, so use `scale`.
-Volumes only grow, and the first one must be at least 10 GB.
+A volume can grow or shrink; a shrink applies to the bill at once and the data
+moves to the smaller volume at 2 AM UTC. The first volume must be at least 10 GB.
 
 Two API limitations worth knowing:
 
@@ -157,12 +167,13 @@ For Claude Code, `claude mcp add zektor -- npx -y zektor mcp` does the same thin
 |---|---|
 | `create_trial_database` | only when **no token** is configured: a free database for an hour, with a claim link to give the user |
 | `whoami`, `list_instances`, `get_instance` | read-only |
+| `get_action` | read-only; how the background work started by `create_instance`, `scale_instance` or `resize_storage` went, by the `actionId` they return |
 | `list_plans`, `list_regions` | read-only; call these before creating rather than guessing a name |
 | `get_connection` | read-only, **returns a live password** for caches |
 | `get_storage` | read-only, PostgreSQL |
 | `create_instance` | costs money |
 | `scale_instance` | changes the bill; scaling down can leave an instance short of what it is using |
-| `resize_storage`, `set_autoscale` | PostgreSQL; volumes only grow |
+| `resize_storage`, `set_autoscale` | PostgreSQL |
 | `delete_instance` | **off by default** — see below |
 
 ### Guardrails
@@ -223,8 +234,6 @@ Next, roughly in order of how often they would be reached for:
 - **Roles** — create and rotate Postgres credentials, which is also what would
   let `connect` work for Postgres rather than printing instructions
 - **Logs** — tail an instance, the one thing people currently open a browser for
-- **Waiting** — a `--wait` flag on `create` and `scale`, so scripts can block on
-  an instance becoming ready instead of polling `list`
 
 Not planned: admin commands. The admin console is deliberately browser-only.
 

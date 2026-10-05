@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
-import { createInterface } from 'node:readline/promises'
+import { constants } from 'node:os'
 import { api } from '../api.js'
-import { data, fail, info } from '../output.js'
+import { ask, data, fail, info } from '../output.js'
+import { whyNotActive } from '../status.js'
 
 /** `zektor list` — one line per instance, or JSON. */
 export async function list(opts: { json?: boolean }): Promise<void> {
@@ -62,11 +63,9 @@ export async function remove(id: string, opts: { yes?: boolean }): Promise<void>
         if (!process.stdin.isTTY)
             fail('Refusing to delete without a terminal to confirm at. Pass --yes if you mean it.')
 
-        const rl = createInterface({ input: process.stdin, output: process.stderr })
-        const answer = await rl.question(
+        const answer = await ask(
             `This deletes "${instance.name}" (#${instance.id}) and its data. Type the name to confirm: `
         )
-        rl.close()
 
         if (answer.trim() !== instance.name) fail('Name did not match. Nothing was deleted.')
     }
@@ -89,8 +88,7 @@ export async function remove(id: string, opts: { yes?: boolean }): Promise<void>
 export async function connect(id: string): Promise<void> {
     const instance = await api.getInstance(id)
 
-    if (instance.status !== 'active')
-        fail(`${instance.name} is ${instance.status}, not active. Wait for provisioning to finish.`)
+    if (instance.status !== 'active') fail(whyNotActive(instance))
 
     const connection = await api.getConnection(id).catch((error) => {
         fail(`Could not read connection details for ${instance.name}: ${(error as Error).message}`)
@@ -132,5 +130,9 @@ export async function connect(id: string): Promise<void> {
     })
 
     // Pass the client's exit code through, so scripts see what really happened.
-    child.on('exit', (code) => process.exit(code ?? 0))
+    // A signal leaves no code; exit as a shell would (128 + signal), not with 0.
+    child.on('exit', (code, signal) => {
+        if (signal) fail(`${command} was ended by ${signal}.`, 128 + (constants.signals[signal] ?? 0))
+        process.exit(code ?? 1)
+    })
 }

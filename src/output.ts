@@ -1,3 +1,5 @@
+import { createInterface } from 'node:readline/promises'
+
 /**
  * Output discipline, in one place so every command obeys it.
  *
@@ -37,4 +39,31 @@ export function warn(message: string): void {
 export function fail(message: string, code = 1): never {
     process.stderr.write(`error: ${message}\n`)
     process.exit(code)
+}
+
+/**
+ * Ends a command the user backed out of at a prompt, with the shell's Ctrl+C code.
+ * The newline moves off the prompt line, where the cursor still sits.
+ */
+export function cancelled(): never {
+    process.stderr.write('\n')
+    fail('Cancelled. Nothing was changed.', 130)
+}
+
+/**
+ * Asks one question on stderr. Ctrl+C, Ctrl+D or a closed stdin close readline
+ * without an answer, which would leave the await unsettled: Node then prints a
+ * warning about the CLI's own code and exits 13. They cancel instead.
+ */
+export async function ask(question: string): Promise<string> {
+    const rl = createInterface({ input: process.stdin, output: process.stderr })
+    let answered = false
+    rl.on('close', () => {
+        if (!answered) cancelled()
+    })
+
+    const answer = await rl.question(question)
+    answered = true
+    rl.close()
+    return answer
 }

@@ -1,7 +1,7 @@
-import { createInterface } from 'node:readline/promises'
 import { api } from '../api.js'
 import { resolveTier } from '../resolve.js'
-import { data, fail, info } from '../output.js'
+import { ask, data, fail, info } from '../output.js'
+import { waitForAction } from '../wait.js'
 
 /**
  * `zektor scale <id> --tier=<plan>`.
@@ -12,7 +12,7 @@ import { data, fail, info } from '../output.js'
  */
 export async function scale(
     id: string,
-    opts: { tier?: string; yes?: boolean; json?: boolean }
+    opts: { tier?: string; yes?: boolean; json?: boolean; wait?: boolean }
 ): Promise<void> {
     if (!opts.tier) fail('--tier is required. Run with a wrong value to see the available plans.')
 
@@ -35,8 +35,6 @@ export async function scale(
         if (!process.stdin.isTTY)
             fail('Refusing to scale without a terminal to confirm at. Pass --yes if you mean it.')
 
-        const rl = createInterface({ input: process.stdin, output: process.stderr })
-
         // Downgrades are the dangerous direction: less memory or storage than the
         // instance may currently be using, so name that rather than asking a bland
         // "are you sure".
@@ -45,21 +43,29 @@ export async function scale(
             : '\nThis reduces the resources available to a running instance. If it is using more ' +
               'than the smaller plan provides, that is a problem you will meet during the move.\n'
 
-        const answer = await rl.question(
+        const answer = await ask(
             `${warning}${direction} ${instance.name} from ${current.name} (€${current.monthlyPriceEur}/mo) ` +
                 `to ${target.name} (€${target.monthlyPriceEur}/mo). Type the instance name to confirm: `
         )
-        rl.close()
 
         if (answer.trim() !== instance.name) fail('Name did not match. Nothing was changed.')
     }
 
     const action = await api.scaleInstance(id, target.id, upScale, current.product)
 
-    if (opts.json) {
-        data({ instanceId: instance.id, actionId: action.id, from: current.name, to: target.name, upScale }, true)
-        return
+    // A failed scale leaves the plan as it was, so `zektor show` alone never
+    // reveals one. --wait reads the outcome from the action.
+    if (!opts.json)
+        info(
+            `${direction} ${instance.name}: ${current.name} → ${target.name}.` +
+                (opts.wait ? '' : ' It runs in the background; pass --wait to see how it ends.')
+        )
+
+    if (opts.wait) {
+        await waitForAction(action.id, `${direction} ${instance.name} to ${target.name}`)
+        if (!opts.json) info(`${instance.name} is now on ${target.name}.`)
     }
 
-    info(`${direction} ${instance.name}: ${current.name} → ${target.name}. Watch it with \`zektor show ${id}\`.`)
+    if (opts.json)
+        data({ instanceId: instance.id, actionId: action.id, from: current.name, to: target.name, upScale }, true)
 }

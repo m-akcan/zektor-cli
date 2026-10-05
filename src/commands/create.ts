@@ -1,6 +1,7 @@
 import { api } from '../api.js'
-import { resolveEngine, resolveLocation, resolveTier } from '../resolve.js'
+import { options, resolveEngine, resolveLocation, resolveTier } from '../resolve.js'
 import { data, fail, info } from '../output.js'
+import { waitForAction } from '../wait.js'
 
 /**
  * `zektor db create` / `zektor cache create`.
@@ -21,6 +22,7 @@ interface CreateOptions {
     tier?: string
     storage?: string
     json?: boolean
+    wait?: boolean
 }
 
 export async function create(group: 'database' | 'cache', opts: CreateOptions): Promise<void> {
@@ -31,14 +33,30 @@ export async function create(group: 'database' | 'cache', opts: CreateOptions): 
         )
 
     if (!opts.name) fail('--name is required.')
-    if (!opts.tier) fail('--tier is required. Run with a wrong value to see the available plans.')
 
-    const tier = resolveTier(await api.listTiers(), group, opts.tier)
+    const tiers = await api.listTiers()
+
+    if (!opts.tier)
+        fail(
+            `--tier is required. ${group === 'database' ? 'Database' : 'Cache'} plans: ${options(
+                tiers.filter((t) => t.productGroup === group).map((t) => `${t.name} (€${t.monthlyPriceEur}/mo)`)
+            )}`
+        )
+
+    const tier = resolveTier(tiers, group, opts.tier)
     const dockerImageId = resolveEngine(tier, opts.engine)
 
-    const location = opts.region
-        ? resolveLocation(await api.listLocations(), opts.region)
-        : undefined
+    // The API has no default region, so asking here beats its 400.
+    const locations = await api.listLocations()
+
+    if (!opts.region)
+        fail(
+            `--region is required. Available regions: ${options(
+                locations.filter((l) => l.rentingAvailable).map((l) => `${l.name} (${l.city})`)
+            )}`
+        )
+
+    const location = resolveLocation(locations, opts.region)
 
     const result = await api.createInstance({
         name: opts.name,
@@ -47,13 +65,19 @@ export async function create(group: 'database' | 'cache', opts: CreateOptions): 
         dockerImageId,
     })
 
+    // Provisioning is asynchronous and takes under a minute; say so rather than
+    // implying the instance is ready to connect to.
+    if (!opts.json) info(`Creating ${opts.name} (#${result.instanceId}) on ${tier.name}.`)
+
+    if (opts.wait) {
+        await waitForAction(result.actionId, `Creating ${opts.name}`)
+        if (!opts.json) info(`${opts.name} is ready.`)
+    }
+
     if (opts.json) {
         data({ instanceId: result.instanceId, actionId: result.actionId, name: opts.name }, true)
         return
     }
 
-    // Provisioning is asynchronous and takes under a minute; say so rather than
-    // implying the instance is ready to connect to.
-    info(`Creating ${opts.name} (#${result.instanceId}) on ${tier.name}.`)
     data(String(result.instanceId), false)
 }

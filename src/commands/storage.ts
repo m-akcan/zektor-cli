@@ -1,5 +1,6 @@
 import { api, type Instance } from '../api.js'
 import { data, fail, info } from '../output.js'
+import { waitForAction } from '../wait.js'
 
 /**
  * Storage commands. Postgres only — a cache has no volume of its own, and the
@@ -73,11 +74,12 @@ export async function storageShow(id: string, opts: { json?: boolean }): Promise
  * `zektor storage resize <id> --size=<gb>`.
  *
  * Creates the volume when the instance has none yet, resizes it otherwise —
- * the same branch the dashboard takes.
+ * the same branch the dashboard takes. A shrink takes effect on the bill at
+ * once; the API moves the data to the smaller volume at 2 AM UTC.
  */
 export async function storageResize(
     id: string,
-    opts: { size?: string; json?: boolean }
+    opts: { size?: string; json?: boolean; wait?: boolean }
 ): Promise<void> {
     const size = Number(opts.size)
 
@@ -87,14 +89,6 @@ export async function storageResize(
     const instance = await postgresInstance(id)
     const volume = instance.volumes?.[0]
 
-    // Hetzner volumes cannot shrink. Saying so is more useful than relaying
-    // whatever error the provider returns three layers down.
-    if (volume && size < volume.sizeInGb)
-        fail(
-            `Cannot shrink storage: ${instance.name} is on ${volume.sizeInGb} GB and volumes only grow. ` +
-                `Pick a size above ${volume.sizeInGb}.`
-        )
-
     if (volume && size === volume.sizeInGb)
         fail(`${instance.name} is already at ${size} GB.`)
 
@@ -102,16 +96,19 @@ export async function storageResize(
         ? await api.resizeVolume(volume.id, size)
         : await api.createVolume(instance.id, size)
 
-    if (opts.json) {
-        data({ instanceId: instance.id, actionId: action.id, sizeGb: size, created: !volume }, true)
-        return
+    const shrink = volume !== undefined && size < volume.sizeInGb
+    const what = volume
+        ? `${shrink ? 'Shrinking' : 'Resizing'} ${instance.name} from ${volume.sizeInGb} GB to ${size} GB`
+        : `Creating a ${size} GB volume for ${instance.name}`
+
+    if (!opts.json) info(`${what}.${shrink ? ' The data moves to the smaller volume at 2 AM UTC.' : ''}`)
+
+    if (opts.wait) {
+        await waitForAction(action.id, what)
+        if (!opts.json) info(`${instance.name} now has ${size} GB of storage.`)
     }
 
-    info(
-        volume
-            ? `Resizing ${instance.name} from ${volume.sizeInGb} GB to ${size} GB.`
-            : `Creating a ${size} GB volume for ${instance.name}.`
-    )
+    if (opts.json) data({ instanceId: instance.id, actionId: action.id, sizeGb: size, created: !volume }, true)
 }
 
 /**
@@ -174,6 +171,14 @@ export async function storageAutoscale(
 
     if (Object.keys(settings).length === 0)
         fail('Nothing to change. Pass --on, --off, --limit, --min or --up-only.')
+
+    // The API refuses these settings without a volume. Where a volume can't be
+    // added at all, its own refusal says so, so only the fixable case is caught.
+    if (!instance.volumes?.length && instance.volumeStorageAvailable !== false)
+        fail(
+            `${instance.name} has no storage volume yet, so there is nothing to autoscale. ` +
+                `Add one with \`zektor storage resize ${instance.id} --size 10\`, then try again.`
+        )
 
     await api.updateStorageSettings(id, settings)
 

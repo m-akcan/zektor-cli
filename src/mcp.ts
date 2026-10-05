@@ -5,6 +5,7 @@ import { api, type Instance } from './api.js'
 import { resolveApiUrl, resolveToken, tokenIsFromEnv } from './config.js'
 import { VERSION } from './version.js'
 import { imageVersion, resolveEngine, resolveLocation, resolveTier } from './resolve.js'
+import { whyNotActive } from './status.js'
 
 /**
  * `zektor mcp` — the same API as the CLI, exposed to an MCP client.
@@ -148,9 +149,12 @@ export async function startMcpServer(): Promise<void> {
                 'Instances are addressed by numeric id — call list_instances to find one. ' +
                 'A plan ("pricing tier") fixes the engine, memory, storage and price, so ' +
                 'creating an instance means choosing a plan with list_plans rather than ' +
-                'specifying resources individually. Provisioning is asynchronous and takes ' +
-                'about a minute; create_instance returns as soon as the work is queued, and ' +
-                'the instance is usable when its status reads "active".\n\n' +
+                'specifying resources individually.\n\n' +
+                'Creating, scaling and resizing storage run in the background. create_instance, ' +
+                'scale_instance and resize_storage return an actionId as soon as the work is ' +
+                'queued; poll get_action with it until status is "Success" or "Failure". On ' +
+                'Failure, errorMessage says why. A new instance is usable once its status reads ' +
+                '"active"; creating takes about a minute.\n\n' +
                 'Storage tools apply to PostgreSQL only. PostgreSQL passwords are never ' +
                 'retrievable: they are shown once when a role is created or rotated and are ' +
                 'not stored, so get_connection returns a usable connection string for caches ' +
@@ -209,6 +213,39 @@ export async function startMcpServer(): Promise<void> {
             annotations: { readOnlyHint: true, openWorldHint: true },
         },
         async ({ id }) => guarded(async () => detail(await api.getInstance(id)))
+    )
+
+    server.registerTool(
+        'get_action',
+        {
+            title: 'Check background work',
+            description:
+                'How the background work started by create_instance, scale_instance or ' +
+                'resize_storage is going, by the actionId they return. status is "Running", ' +
+                '"Success" or "Failure"; on Failure, errorMessage says why. While it is Running, ' +
+                'call this again every few seconds.',
+            inputSchema: {
+                action_id: z.coerce
+                    .number()
+                    .int()
+                    .positive()
+                    .describe('actionId from create_instance, scale_instance or resize_storage'),
+            },
+            annotations: { readOnlyHint: true, openWorldHint: true },
+        },
+        async ({ action_id }) =>
+            guarded(async () => {
+                const action = await api.getAction(action_id)
+                return {
+                    actionId: action.id,
+                    command: action.command,
+                    status: action.status,
+                    progress: action.progress,
+                    errorMessage: action.errorMessage || null,
+                    startedAt: action.startedAt,
+                    finishedAt: action.finishedAt ?? null,
+                }
+            })
     )
 
     server.registerTool(
@@ -287,11 +324,7 @@ export async function startMcpServer(): Promise<void> {
             guarded(async () => {
                 const instance = await api.getInstance(id)
 
-                if (instance.status !== 'active')
-                    throw new Error(
-                        `${instance.name} is ${instance.status}, not active. ` +
-                            'Connection details exist once provisioning has finished.'
-                    )
+                if (instance.status !== 'active') throw new Error(whyNotActive(instance))
 
                 const connection = await api.getConnection(id)
 
@@ -326,14 +359,15 @@ export async function startMcpServer(): Promise<void> {
             description:
                 'Provisions a database or cache. THIS COSTS MONEY — the plan is billed monthly ' +
                 'from creation until the instance is deleted.\n\n' +
-                'Storage is not a parameter: it comes with the plan. Provisioning is ' +
-                'asynchronous, so this returns an instance id immediately and the instance ' +
-                'becomes usable when get_instance reports status "active".',
+                'Storage is not a parameter: it comes with the plan. Creating runs in the ' +
+                'background, so this returns an instance id and an actionId immediately. Poll ' +
+                'get_action with the actionId until it reports "Success" (the instance is then ' +
+                '"active") or "Failure".',
             inputSchema: {
                 group: z.enum(['database', 'cache']).describe('database for PostgreSQL, cache for Valkey/Redis'),
                 name: z.string().min(1).describe('Instance name'),
                 tier: z.string().describe('Plan name from list_plans, e.g. AKPG-5'),
-                region: z.string().optional().describe('Region name or city from list_regions. Omit for the default.'),
+                region: z.string().describe('Region name (e.g. fsn1) or city from list_regions. Required: there is no default.'),
                 engine: z
                     .string()
                     .optional()
@@ -353,7 +387,7 @@ export async function startMcpServer(): Promise<void> {
                     engine && !engine.includes('@') ? `${plan.product}@${engine}` : engine
                 )
 
-                const location = region ? resolveLocation(await api.listLocations(), region) : undefined
+                const location = resolveLocation(await api.listLocations(), region)
 
                 const result = await api.createInstance({
                     name,
@@ -364,11 +398,14 @@ export async function startMcpServer(): Promise<void> {
 
                 return {
                     instanceId: result.instanceId,
+                    actionId: result.actionId,
                     name,
                     plan: plan.name,
                     monthlyPriceEur: plan.monthlyPriceEur,
-                    status: 'provisioning',
-                    note: 'Provisioning takes about a minute. Poll get_instance until status is "active".',
+                    status: 'creating',
+                    note:
+                        'Queued, not done. Creating takes about a minute. Poll get_action with actionId ' +
+                        'until status is "Success" or "Failure"; on Failure, errorMessage says why.',
                 }
             })
     )
@@ -411,15 +448,20 @@ export async function startMcpServer(): Promise<void> {
                 // sideways move is not treated as a downgrade.
                 const upScale = target.monthlyPriceEur >= current.monthlyPriceEur
 
-                await api.scaleInstance(id, target.id, upScale, current.product)
+                const action = await api.scaleInstance(id, target.id, upScale, current.product)
 
                 return {
                     instanceId: instance.id,
+                    actionId: action.id,
                     from: current.name,
                     to: target.name,
                     direction: upScale ? 'up' : 'down',
                     monthlyPriceEur: target.monthlyPriceEur,
-                    note: 'Scaling is asynchronous. Watch get_instance for the new plan.',
+                    status: 'queued',
+                    note:
+                        'Queued, not done. Poll get_action with actionId until status is "Success" or ' +
+                        '"Failure"; on Failure, errorMessage says why. A failed move leaves the plan ' +
+                        'unchanged, so get_instance alone never shows it.',
                 }
             })
     )
@@ -666,11 +708,7 @@ export async function startMcpServer(): Promise<void> {
                             'already returns a usable connection string.'
                     )
 
-                if (instance.status !== 'active')
-                    throw new Error(
-                        `${instance.name} is ${instance.status}, not active. Roles can be created ` +
-                            'once provisioning has finished.'
-                    )
+                if (instance.status !== 'active') throw new Error(whyNotActive(instance))
 
                 // Unique by default. A fixed name collides on the second call, and a model
                 // retrying a failed step should not get "a role named agent already exists".
@@ -729,11 +767,12 @@ export async function startMcpServer(): Promise<void> {
     server.registerTool(
         'resize_storage',
         {
-            title: 'Grow storage',
+            title: 'Resize storage',
             description:
-                'Grows the volume of a PostgreSQL instance, creating one if it has none. ' +
-                'ONE WAY: volumes cannot shrink, so the new size is a floor on what the ' +
-                'instance costs from now on. Creates the volume when the instance has none yet.',
+                'Grows or shrinks the volume of a PostgreSQL instance, creating one if it has ' +
+                'none. Storage is billed by size. A shrink is recorded at once and the data ' +
+                'moves to the smaller volume at 2 AM UTC, so pick a size that holds what the ' +
+                'instance stores (get_storage shows usage).',
             inputSchema: {
                 id: instanceId,
                 size_gb: z.coerce.number().int().positive().describe('New size in whole gigabytes'),
@@ -745,22 +784,26 @@ export async function startMcpServer(): Promise<void> {
                 const instance = await postgresInstance(id)
                 const volume = instance.volumes?.[0]
 
-                if (volume && size_gb < volume.sizeInGb)
-                    throw new Error(
-                        `Cannot shrink storage: ${instance.name} is on ${volume.sizeInGb} GB and ` +
-                            `volumes only grow. Pick a size above ${volume.sizeInGb}.`
-                    )
-
                 if (volume && size_gb === volume.sizeInGb)
                     throw new Error(`${instance.name} is already at ${size_gb} GB.`)
 
-                await (volume ? api.resizeVolume(volume.id, size_gb) : api.createVolume(instance.id, size_gb))
+                const action = await (volume
+                    ? api.resizeVolume(volume.id, size_gb)
+                    : api.createVolume(instance.id, size_gb))
 
                 return {
                     instanceId: instance.id,
+                    actionId: action.id,
                     sizeGb: size_gb,
                     created: !volume,
                     previousSizeGb: volume?.sizeInGb ?? null,
+                    status: 'queued',
+                    note:
+                        'Queued, not done. Poll get_action with actionId until status is "Success" or ' +
+                        '"Failure"; on Failure, errorMessage says why.' +
+                        (volume && size_gb < volume.sizeInGb
+                            ? ' After Success the data still moves to the smaller volume at 2 AM UTC.'
+                            : ''),
                 }
             })
     )
@@ -798,6 +841,13 @@ export async function startMcpServer(): Promise<void> {
 
                 if (Object.keys(settings).length === 0)
                     throw new Error('Nothing to change. Pass at least one of enabled, limit_gb, minimum_gb, up_only.')
+
+                // Same check as the CLI: only the case resize_storage can fix.
+                if (!instance.volumes?.length && instance.volumeStorageAvailable !== false)
+                    throw new Error(
+                        `${instance.name} has no storage volume yet, so there is nothing to autoscale. ` +
+                            'Add one with resize_storage (10 GB or more), then try again.'
+                    )
 
                 await api.updateStorageSettings(id, settings)
 
