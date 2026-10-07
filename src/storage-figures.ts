@@ -102,10 +102,21 @@ export async function growStorage(i: Instance, size: number, beforeRequest?: () 
 }
 
 /**
- * Refuses automatic-growth settings the API would refuse, in its words, before sending
- * them. Turning it on needs a limit above the current size, sent now or set before.
+ * Refuses automatic-growth settings the API would refuse, in its words and in its order,
+ * before sending them. Turning it on needs a limit above the current size, sent now or
+ * set before. Whether the account can be billed is left to the API.
  */
 export function checkAutoGrow(i: Instance, settings: StorageSettings): void {
+    // A legacy database refuses every change, and with growing off only turning it on is refused.
+    if (i.storageGrowable === false && i.canBranch === false)
+        throw new Error(
+            "Automatic storage growth isn't available for this database yet: it was created before " +
+                'growable storage existed, and is moving there soon.'
+        )
+
+    if (i.storageGrowable === false && settings.enableAutoScale)
+        throw new Error("Automatic storage growth isn't available yet.")
+
     const size = sizeGb(i)
     const limit = settings.autoScalingLimitGb
     const max = i.storageMaxGb ?? MAX_GB
