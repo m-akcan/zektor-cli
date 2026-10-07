@@ -1,9 +1,19 @@
-import { api, type Instance } from '../api.js'
-import { data, fail, info } from '../output.js'
+import { api, type Instance, type StorageSettings } from '../api.js'
+import { data, fail, info, warn } from '../output.js'
+import {
+    abovePlanAfterGrow,
+    abovePlanEur,
+    billedOn,
+    checkAutoGrow,
+    eur,
+    growStorage,
+    includedGb,
+    sizeGb,
+} from '../storage-figures.js'
 import { waitForAction } from '../wait.js'
 
 /**
- * Storage commands. Postgres only — a cache has no volume of its own, and the
+ * Storage commands. Postgres only — a cache is sized by its plan, and the
  * dashboard offers no storage controls for one either.
  */
 
@@ -21,61 +31,113 @@ async function postgresInstance(id: string): Promise<Instance> {
     return instance
 }
 
-const gb = (mb?: number) => (mb === undefined ? undefined : Math.round((mb / 1024) * 10) / 10)
+/** Usage, to a tenth of a GB. The size is in whole GB, as it is billed. */
+const gb = (mb?: number | null) => (mb == null ? undefined : Math.round((mb / 1024) * 10) / 10)
 
-/** `zektor storage show <id>` — size, usage and the autoscaling rules. */
+/** `zektor storage show <id>` — size, usage, what is billed, and automatic growth. */
 export async function storageShow(id: string, opts: { json?: boolean }): Promise<void> {
     const instance = await postgresInstance(id)
-    const volume = instance.volumes?.[0]
+    const size = sizeGb(instance)
+    const used = gb(instance.dbStorageUsedMb)
+    const included = includedGb(instance.pricingTier)
+    const limit = instance.autoScalingLimitGb
 
     if (opts.json) {
         data(
             {
+                // 1.6's keys, kept for scripts, with what is true now: there is no
+                // volume, storage only grows, and nothing has a minimum.
                 instanceId: instance.id,
-                volumeId: volume?.id ?? null,
-                sizeGb: volume?.sizeInGb ?? gb(instance.dbStorageLimitMb) ?? null,
-                usedGb: gb(instance.dbStorageUsedMb) ?? null,
+                volumeId: null,
+                sizeGb: size,
+                usedGb: used ?? null,
                 autoScale: instance.enableAutoScale ?? false,
-                autoScaleUpOnly: instance.autoScaleUpOnly ?? false,
-                autoScaleLimitGb: instance.autoScalingLimitGb ?? null,
-                minimumDiskSizeGb: instance.minimumDiskSizeGb ?? null,
+                autoScaleUpOnly: true,
+                autoScaleLimitGb: limit ?? null,
+                minimumDiskSizeGb: null,
+                includedGb: included,
+                billedGb: instance.storageBilledGb ?? null,
+                abovePlanGb: instance.storageAbovePlanGb ?? null,
+                abovePlanMonthlyEur: instance.storageAbovePlanMonthlyEur ?? null,
+                billedOn: billedOn(instance) ?? null,
+                growable: instance.storageGrowable ?? null,
+                maxGb: instance.storageMaxGb ?? null,
             },
             true
         )
         return
     }
 
-    const size = volume?.sizeInGb ?? gb(instance.dbStorageLimitMb)
-    const used = gb(instance.dbStorageUsedMb)
+    const legacy = instance.storageGrowable === false && instance.canBranch === false
+    const atLimit = limit ? abovePlanEur(limit, instance.pricingTier) : undefined
 
-    const rows: [string, string][] = [
-        ['size', size === undefined ? 'unknown' : `${size} GB`],
-        ['used', used === undefined ? 'unknown' : `${used} GB`],
-        ['autoscale', instance.enableAutoScale ? 'on' : 'off'],
-        ['up only', instance.autoScaleUpOnly ? 'yes' : 'no'],
-        ['limit', instance.autoScalingLimitGb ? `${instance.autoScalingLimitGb} GB` : 'none'],
-        // Three states, not two. Older backends omit the field entirely — it was
-        // absent from the read DTO while being settable — and there "none" would
-        // be a lie whenever a minimum is set. A present 0 genuinely means unset.
+    // Key, value, and an optional note after the value.
+    const rows: [string, string, string?][] = [
+        ['size', `${size} GB`, 'grows only, never shrinks'],
         [
-            'minimum',
-            instance.minimumDiskSizeGb === undefined
-                ? 'not reported (older API)'
-                : instance.minimumDiskSizeGb
-                  ? `${instance.minimumDiskSizeGb} GB`
-                  : 'none',
+            'used',
+            used === undefined ? 'unknown' : `${used} GB`,
+            billedOn(instance) === 'written' ? '(branch: its own written data, what it is billed on)' : undefined,
         ],
+        ['included', `${included} GB`, `with ${instance.pricingTier?.name ?? 'its plan'}`],
     ]
 
-    for (const [key, value] of rows) data(`${key.padEnd(10)} ${value}`, false)
+    if (legacy)
+        rows.push(['above plan', "not billed · can't grow yet: created before growable storage, moving soon"])
+    else if (instance.storageAbovePlanGb === undefined || instance.storageAbovePlanMonthlyEur === undefined)
+        rows.push(['above plan', 'unknown (this API predates growable storage)'])
+    else
+        rows.push([
+            'above plan',
+            `${instance.storageAbovePlanGb} GB`,
+            `€${eur(instance.storageAbovePlanMonthlyEur)}/month net, prorated by the hour`,
+        ])
+
+    rows.push(
+        instance.enableAutoScale
+            ? [
+                  'auto-grow',
+                  `on, up to ${limit} GB`,
+                  '(at 80% full: +5 GB or to 70% full, whichever is more' +
+                      (atLimit === undefined ? ')' : `; at the limit €${eur(atLimit)}/month)`),
+              ]
+            : ['auto-grow', 'off', limit ? `limit ${limit} GB` : undefined]
+    )
+
+    if (instance.storageGrowable === false && !legacy) rows.push(['grow', 'not available on this account yet'])
+
+    for (const [key, value, note] of rows)
+        data(`${key.padEnd(10)} ${note ? `${value.padEnd(6)}  ${note}` : value}`, false)
+}
+
+/** What a grow costs, said before it is asked for: there is no prompt, and no way back. */
+function growNotice(instance: Instance, size: number): string {
+    const plan = instance.pricingTier?.name
+    const included = includedGb(instance.pricingTier)
+    const monthly = abovePlanEur(size, instance.pricingTier)
+    const now = instance.storageAbovePlanMonthlyEur
+
+    const cost = instance.storageBilledOnWrittenData
+        ? ", free while it's a branch; if promoted it is billed on its full size."
+        : monthly === undefined || now === undefined
+          ? '.'
+          : size <= included
+            ? `. ${plan} includes ${included} GB, so it costs nothing extra.`
+            : `. ${plan} includes ${included} GB; the ${size - included} GB above it cost €${eur(monthly)}/month net ` +
+              `(now €${eur(now)}), prorated by the hour.`
+
+    return (
+        `Growing ${instance.name} from ${sizeGb(instance)} GB to ${size} GB${cost} ` +
+        'Storage never shrinks, not even on a downgrade.'
+    )
 }
 
 /**
  * `zektor storage resize <id> --size=<gb>`.
  *
- * Creates the volume when the instance has none yet, resizes it otherwise —
- * the same branch the dashboard takes. A shrink takes effect on the bill at
- * once; the API moves the data to the smaller volume at 2 AM UTC.
+ * Grows storage online, with no restart. It never shrinks, so this can't be undone,
+ * but it asks nothing either: scripts that call it keep working. What the new size
+ * costs goes to stderr just before the request.
  */
 export async function storageResize(
     id: string,
@@ -87,34 +149,34 @@ export async function storageResize(
         fail('--size must be a whole number of gigabytes, e.g. --size=50.')
 
     const instance = await postgresInstance(id)
-    const volume = instance.volumes?.[0]
 
-    if (volume && size === volume.sizeInGb)
-        fail(`${instance.name} is already at ${size} GB.`)
-
-    const action = volume
-        ? await api.resizeVolume(volume.id, size)
-        : await api.createVolume(instance.id, size)
-
-    const shrink = volume !== undefined && size < volume.sizeInGb
-    const what = volume
-        ? `${shrink ? 'Shrinking' : 'Resizing'} ${instance.name} from ${volume.sizeInGb} GB to ${size} GB`
-        : `Creating a ${size} GB volume for ${instance.name}`
-
-    if (!opts.json) info(`${what}.${shrink ? ' The data moves to the smaller volume at 2 AM UTC.' : ''}`)
+    const action = await growStorage(instance, size, () => {
+        if (!opts.json) info(growNotice(instance, size))
+    })
 
     if (opts.wait) {
-        await waitForAction(action.id, what)
+        await waitForAction(action.id, `Growing ${instance.name} to ${size} GB`)
         if (!opts.json) info(`${instance.name} now has ${size} GB of storage.`)
     }
 
-    if (opts.json) data({ instanceId: instance.id, actionId: action.id, sizeGb: size, created: !volume }, true)
+    if (opts.json)
+        data(
+            {
+                instanceId: instance.id,
+                actionId: action.id,
+                sizeGb: size,
+                previousSizeGb: sizeGb(instance),
+                abovePlanMonthlyEur: abovePlanAfterGrow(instance, size) ?? null,
+                created: false,
+            },
+            true
+        )
 }
 
 /**
- * `zektor storage autoscale <id> --on|--off`.
+ * `zektor storage autoscale <id> --on|--off [--limit=<gb>]`.
  *
- * Only the flags given are sent, so turning autoscaling on does not silently
+ * Only the flags given are sent, so turning automatic growth on does not silently
  * reset a limit somebody set in the dashboard.
  */
 export async function storageAutoscale(
@@ -130,20 +192,16 @@ export async function storageAutoscale(
 ): Promise<void> {
     if (opts.on && opts.off) fail('Pass either --on or --off, not both.')
 
+    // Still parsed, so 1.6 scripts keep running. Storage only grows, so neither means anything now.
+    if (opts.min !== undefined || opts.upOnly !== undefined)
+        warn('--min and --up-only are ignored: storage only grows.')
+
     const instance = await postgresInstance(id)
 
-    const settings: Record<string, unknown> = {}
+    const settings: StorageSettings = {}
 
     if (opts.on) settings.enableAutoScale = true
     if (opts.off) settings.enableAutoScale = false
-
-    // Takes a value rather than being a bare flag: a flag can only ever turn
-    // this on, leaving no way to turn it off again.
-    if (opts.upOnly !== undefined) {
-        if (opts.upOnly !== 'yes' && opts.upOnly !== 'no')
-            fail('--up-only must be "yes" or "no".')
-        settings.autoScaleUpOnly = opts.upOnly === 'yes'
-    }
 
     // No "none": the API tests each field with HasValue, so null means "leave
     // unchanged", not "clear". Accepting none would silently do nothing.
@@ -158,29 +216,11 @@ export async function storageAutoscale(
         settings.autoScalingLimitGb = limit
     }
 
-    if (opts.min !== undefined) {
-        const min = Number(opts.min)
-        if (!Number.isInteger(min) || min <= 0)
-            fail(
-                opts.min === 'none'
-                    ? 'The API cannot clear a floor once set — it treats an omitted value as "no change". Set a new number instead.'
-                    : '--min must be a whole number of gigabytes.'
-            )
-        settings.minimumDiskSizeGb = min
-    }
+    if (Object.keys(settings).length === 0) fail('Nothing to change. Pass --on, --off or --limit.')
 
-    if (Object.keys(settings).length === 0)
-        fail('Nothing to change. Pass --on, --off, --limit, --min or --up-only.')
+    checkAutoGrow(instance, settings)
 
-    // The API refuses these settings without a volume. Where a volume can't be
-    // added at all, its own refusal says so, so only the fixable case is caught.
-    if (!instance.volumes?.length && instance.volumeStorageAvailable !== false)
-        fail(
-            `${instance.name} has no storage volume yet, so there is nothing to autoscale. ` +
-                `Add one with \`zektor storage resize ${instance.id} --size 10\`, then try again.`
-        )
-
-    await api.updateStorageSettings(id, settings)
+    const after = await api.updateStorageSettings(id, settings)
 
     if (opts.json) {
         data({ instanceId: instance.id, applied: settings }, true)
@@ -188,5 +228,17 @@ export async function storageAutoscale(
     }
 
     info(`Updated storage settings for ${instance.name}.`)
+
+    if (after.enableAutoScale) {
+        const limit = after.autoScalingLimitGb
+        const atLimit = limit ? abovePlanEur(limit, after.pricingTier) : undefined
+
+        info(
+            `Automatic growth is on: at 80% full it grows to the larger of +5 GB or 70% full, never above ${limit} GB. ` +
+                "Each grow is permanent and billed like a manual one, and you're notified each time."
+        )
+        if (atLimit !== undefined) info(`at the limit: €${eur(atLimit)}/month net above the plan`)
+    }
+
     await storageShow(id, {})
 }

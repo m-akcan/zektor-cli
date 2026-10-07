@@ -1,11 +1,19 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { api, type Instance } from './api.js'
+import { api, type Instance, type StorageSettings } from './api.js'
 import { resolveApiUrl, resolveToken, tokenIsFromEnv } from './config.js'
 import { VERSION } from './version.js'
 import { imageVersion, resolveEngine, resolveLocation, resolveTier } from './resolve.js'
 import { whyNotActive } from './status.js'
+import {
+    abovePlanAfterGrow,
+    billedOn,
+    checkAutoGrow,
+    growStorage,
+    includedGb,
+    sizeGb,
+} from './storage-figures.js'
 
 /**
  * `zektor mcp` — the same API as the CLI, exposed to an MCP client.
@@ -74,7 +82,7 @@ const confirmName = z
             'Call get_instance first and copy it from there.'
     )
 
-const gb = (mb?: number) => (mb === undefined ? undefined : Math.round((mb / 1024) * 10) / 10)
+const gb = (mb?: number | null) => (mb == null ? undefined : Math.round((mb / 1024) * 10) / 10)
 
 /**
  * The list view. Full instances carry their whole pricing tier including every
@@ -100,23 +108,27 @@ const detail = (i: Instance) => ({
     createdAt: i.createdAt ?? null,
     monthlyPriceEur: i.pricingTier?.monthlyPriceEur ?? null,
     productGroup: i.pricingTier?.productGroup ?? null,
-    storage: i.volumes?.length || i.dbStorageLimitMb !== undefined ? storage(i) : undefined,
+    storage: i.dbStorageLimitMb != null ? storage(i) : undefined,
     hint: 'Connection details, including any password, come from get_connection.',
 })
 
+/**
+ * Sizes in whole GB, as billed, except usage. The billing figures come from the API;
+ * null means one older than growable storage, not zero.
+ */
 function storage(i: Instance) {
     return {
-        sizeGb: i.volumes?.[0]?.sizeInGb ?? gb(i.dbStorageLimitMb) ?? null,
+        sizeGb: sizeGb(i),
         usedGb: gb(i.dbStorageUsedMb) ?? null,
-        volumeId: i.volumes?.[0]?.id ?? null,
-        autoScale: i.enableAutoScale ?? false,
-        autoScaleUpOnly: i.autoScaleUpOnly ?? false,
-        autoScalingLimitGb: i.autoScalingLimitGb ?? null,
-        // Three states, not two. Older backends omit the field entirely — it was
-        // settable while being absent from the read DTO — and there a flat null
-        // would read as "no minimum" when one may well be set.
-        minimumDiskSizeGb:
-            i.minimumDiskSizeGb === undefined ? 'not reported by this API version' : i.minimumDiskSizeGb,
+        includedGb: includedGb(i.pricingTier),
+        abovePlanGb: i.storageAbovePlanGb ?? null,
+        abovePlanMonthlyEur: i.storageAbovePlanMonthlyEur ?? null,
+        billedOn: billedOn(i) ?? null,
+        growable: i.storageGrowable ?? null,
+        maxGb: i.storageMaxGb ?? null,
+        autoGrow: i.enableAutoScale ?? false,
+        // 0 is the API's "never set": a limit can't be below the size.
+        autoGrowLimitGb: i.autoScalingLimitGb || null,
     }
 }
 
@@ -147,10 +159,11 @@ export async function startMcpServer(): Promise<void> {
             instructions:
                 'Manages Zektor.io databases (PostgreSQL) and caches (Valkey/Redis).\n\n' +
                 'Instances are addressed by numeric id — call list_instances to find one. ' +
-                'A plan ("pricing tier") fixes the engine, memory, storage and price, so ' +
-                'creating an instance means choosing a plan with list_plans rather than ' +
+                'A plan ("pricing tier") fixes the engine, memory and price; storage starts at ' +
+                'what the plan includes and can grow (never shrink), at €0.15/GB/month net above ' +
+                'it. Creating an instance means choosing a plan with list_plans rather than ' +
                 'specifying resources individually.\n\n' +
-                'Creating, scaling and resizing storage run in the background. create_instance, ' +
+                'Creating, scaling and growing storage run in the background. create_instance, ' +
                 'scale_instance and resize_storage return an actionId as soon as the work is ' +
                 'queued; poll get_action with it until status is "Success" or "Failure". On ' +
                 'Failure, errorMessage says why. A new instance is usable once its status reads ' +
@@ -359,7 +372,8 @@ export async function startMcpServer(): Promise<void> {
             description:
                 'Provisions a database or cache. THIS COSTS MONEY — the plan is billed monthly ' +
                 'from creation until the instance is deleted.\n\n' +
-                'Storage is not a parameter: it comes with the plan. Creating runs in the ' +
+                'Storage is not a parameter: it starts at the plan\'s included storage; grow it ' +
+                'later with resize_storage. Creating runs in the ' +
                 'background, so this returns an instance id and an actionId immediately. Poll ' +
                 'get_action with the actionId until it reports "Success" (the instance is then ' +
                 '"active") or "Failure".',
@@ -503,10 +517,10 @@ export async function startMcpServer(): Promise<void> {
                 'Creates a copy-on-write clone of a PostgreSQL instance: it has the '
                 + 'source\'s data from the moment of branching, and the two diverge '
                 + 'independently afterwards.\n\n'
-                + 'THIS COSTS MONEY — a branch is billed hourly at its plan\'s rate, like any '
-                + 'instance. Storage is shared with the source, so only what the branch '
-                + 'changes adds to it. Pick a smaller plan than the source when the branch is '
-                + 'for a test.\n\n'
+                + 'THIS COSTS MONEY — a branch is billed hourly like any instance: on its plan, '
+                + 'and on what it writes itself above that plan\'s included storage at '
+                + '€0.15/GB/month, while it is a branch. Once promoted, it is billed on its full '
+                + 'size. Pick a smaller plan than the source when the branch is for a test.\n\n'
                 + 'Takes about a minute: the clone itself is instant, but a second PostgreSQL '
                 + 'has to start. Poll get_instance until status is "active". Branching is '
                 + 'refused on instances not using branch-capable storage.',
@@ -574,11 +588,10 @@ export async function startMcpServer(): Promise<void> {
             description:
                 'Branches delete themselves after a while, so a forgotten one does not keep '
                 + 'costing money. This extends that deadline, or removes it entirely.\n\n'
-                + 'Removing it is a real decision, not a convenience: a branch holds a '
-                + 'snapshot of its source, and that snapshot keeps the source\'s old data '
-                + 'alive as the source is written to. A branch kept for ever slowly grows '
-                + 'the bill for the database it was forked from, which is not obvious from '
-                + 'looking at the branch.',
+                + 'Removing it is a real decision, not a convenience: a kept branch holds its '
+                + 'source\'s old blocks, which count against the source\'s storage. When that '
+                + 'fills, growing it (by hand or automatically) is what costs, which is not '
+                + 'obvious from looking at the branch.',
             inputSchema: {
                 id: instanceId,
                 branch_id: z.coerce.number().int().positive().describe('The branch to change'),
@@ -752,8 +765,10 @@ export async function startMcpServer(): Promise<void> {
     server.registerTool(
         'get_storage',
         {
-            title: 'Show storage and autoscaling',
-            description: 'Size, usage and autoscaling settings for a PostgreSQL instance.',
+            title: 'Show storage and automatic growth',
+            description:
+                'Size, usage, included storage, what is billed above the plan (net €/month), and ' +
+                'automatic growth for a PostgreSQL instance.',
             inputSchema: { id: instanceId },
             annotations: { readOnlyHint: true, openWorldHint: true },
         },
@@ -767,42 +782,50 @@ export async function startMcpServer(): Promise<void> {
     server.registerTool(
         'resize_storage',
         {
-            title: 'Resize storage',
+            title: 'Grow storage',
             description:
-                'Grows or shrinks the volume of a PostgreSQL instance, creating one if it has ' +
-                'none. Storage is billed by size. A shrink is recorded at once and the data ' +
-                'moves to the smaller volume at 2 AM UTC, so pick a size that holds what the ' +
-                'instance stores (get_storage shows usage).',
+                'Grows the storage of a PostgreSQL instance to size_gb (larger than now, at most ' +
+                '1000 GB). Storage only grows: this can\'t be undone, not even by moving to a ' +
+                'smaller plan. Each GB above the plan\'s included storage costs €0.15/month net, ' +
+                'prorated by the hour; get_storage shows the current figures.',
             inputSchema: {
                 id: instanceId,
-                size_gb: z.coerce.number().int().positive().describe('New size in whole gigabytes'),
+                size_gb: z.coerce
+                    .number()
+                    .int()
+                    .positive()
+                    .max(1000)
+                    .describe('New size in whole GB, larger than now, at most 1000'),
+                confirm_name: confirmName,
             },
-            annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+            annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: false, openWorldHint: true },
         },
-        async ({ id, size_gb }) =>
+        async ({ id, size_gb, confirm_name }) =>
             guarded(async () => {
                 const instance = await postgresInstance(id)
-                const volume = instance.volumes?.[0]
 
-                if (volume && size_gb === volume.sizeInGb)
-                    throw new Error(`${instance.name} is already at ${size_gb} GB.`)
+                if (confirm_name !== instance.name)
+                    throw new Error(
+                        `confirm_name "${confirm_name}" does not match instance #${id}, which is ` +
+                            `"${instance.name}". Nothing was changed.`
+                    )
 
-                const action = await (volume
-                    ? api.resizeVolume(volume.id, size_gb)
-                    : api.createVolume(instance.id, size_gb))
+                const action = await growStorage(instance, size_gb)
 
                 return {
                     instanceId: instance.id,
                     actionId: action.id,
+                    previousSizeGb: sizeGb(instance),
                     sizeGb: size_gb,
-                    created: !volume,
-                    previousSizeGb: volume?.sizeInGb ?? null,
+                    includedGb: includedGb(instance.pricingTier),
+                    abovePlanMonthlyEur: abovePlanAfterGrow(instance, size_gb) ?? null,
                     status: 'queued',
                     note:
                         'Queued, not done. Poll get_action with actionId until status is "Success" or ' +
-                        '"Failure"; on Failure, errorMessage says why.' +
-                        (volume && size_gb < volume.sizeInGb
-                            ? ' After Success the data still moves to the smaller volume at 2 AM UTC.'
+                        '"Failure"; on Failure, errorMessage says why. It runs online, with no restart.' +
+                        (instance.storageBilledOnWrittenData
+                            ? ' This is a branch, billed on what it writes, so the new size costs ' +
+                              'nothing until it is promoted.'
                             : ''),
                 }
             })
@@ -811,43 +834,37 @@ export async function startMcpServer(): Promise<void> {
     server.registerTool(
         'set_autoscale',
         {
-            title: 'Configure storage autoscaling',
+            title: 'Configure automatic storage growth',
             description:
-                'Turns autoscaling on or off for a PostgreSQL instance and sets its bounds. ' +
-                'Only the fields you pass are sent, so changing one setting leaves the others ' +
-                'alone. Note that a bound cannot be cleared once set — the API reads an omitted ' +
-                'field as "no change" — so it can only be moved to a different number.',
+                'Turns automatic storage growth on or off for a PostgreSQL instance and sets its ' +
+                'limit. When on, at 80% full storage grows to the larger of +5 GB or 70% full, ' +
+                'never above limit_gb, which is required to turn it on; each grow is permanent ' +
+                'and billed like resize_storage. A limit can be raised or lowered but not cleared. ' +
+                'Only the fields you pass are sent, so changing one leaves the other alone.',
             inputSchema: {
                 id: instanceId,
-                enabled: z.boolean().optional().describe('Turn autoscaling on or off'),
-                limit_gb: z.coerce.number().int().positive().optional().describe('Ceiling, in gigabytes'),
-                minimum_gb: z.coerce.number().int().positive().optional().describe('Floor, in gigabytes'),
-                up_only: z
-                    .boolean()
+                enabled: z.boolean().optional().describe('Turn automatic growth on or off'),
+                limit_gb: z.coerce
+                    .number()
+                    .int()
+                    .positive()
                     .optional()
-                    .describe('true to grow only; false to allow automatic shrinking'),
+                    .describe('Largest size automatic growth may reach, in GB. Above the current size to turn it on.'),
             },
             annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
         },
-        async ({ id, enabled, limit_gb, minimum_gb, up_only }) =>
+        async ({ id, enabled, limit_gb }) =>
             guarded(async () => {
                 const instance = await postgresInstance(id)
 
-                const settings: Record<string, unknown> = {}
+                const settings: StorageSettings = {}
                 if (enabled !== undefined) settings.enableAutoScale = enabled
-                if (up_only !== undefined) settings.autoScaleUpOnly = up_only
                 if (limit_gb !== undefined) settings.autoScalingLimitGb = limit_gb
-                if (minimum_gb !== undefined) settings.minimumDiskSizeGb = minimum_gb
 
                 if (Object.keys(settings).length === 0)
-                    throw new Error('Nothing to change. Pass at least one of enabled, limit_gb, minimum_gb, up_only.')
+                    throw new Error('Nothing to change. Pass enabled, limit_gb, or both.')
 
-                // Same check as the CLI: only the case resize_storage can fix.
-                if (!instance.volumes?.length && instance.volumeStorageAvailable !== false)
-                    throw new Error(
-                        `${instance.name} has no storage volume yet, so there is nothing to autoscale. ` +
-                            'Add one with resize_storage (10 GB or more), then try again.'
-                    )
+                checkAutoGrow(instance, settings)
 
                 await api.updateStorageSettings(id, settings)
 

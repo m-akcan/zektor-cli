@@ -197,6 +197,8 @@ export interface PricingTier {
     productGroup: string
     memoryMb?: number | null
     storageMb?: number | null
+    /** Net €/month for each whole GB above `storageMb`. Null where storage isn't sold; absent before 3.23. */
+    storageGbMonthlyPriceEur?: number | null
     dockerImages: DockerImage[]
 }
 
@@ -206,13 +208,6 @@ export interface Location {
     city: string
     country: string
     rentingAvailable: boolean
-}
-
-export interface Volume {
-    id: number
-    name: string
-    status: string
-    sizeInGb: number
 }
 
 export interface Instance {
@@ -231,20 +226,29 @@ export interface Instance {
     pricingTier: PricingTier
     /** For an instance in error, why creating it failed. Absent on older APIs. */
     failureMessage?: string | null
-    /** False where the API refuses a volume (a CNPG-managed Postgres). Absent on older APIs. */
-    volumeStorageAvailable?: boolean
+    /** False for a database created before its node's storage pool existed. Absent before 3.22. */
+    canBranch?: boolean
+    /** Whether its storage can grow: false on such a legacy database, or while growing is off. Absent before 3.22. */
+    storageGrowable?: boolean
 
-    // Postgres storage. Absent on caches, which have no volume of their own.
-    dbStorageLimitMb?: number
-    dbStorageUsedMb?: number
-    volumes?: Volume[]
+    // Postgres storage. Absent on caches, which are sized by their plan.
+    dbStorageLimitMb?: number | null
+    dbStorageUsedMb?: number | null
     enableAutoScale?: boolean
-    autoScaleUpOnly?: boolean
     autoScalingLimitGb?: number
-    minimumDiskSizeGb?: number
+
+    // What billing measures, computed by the API. Absent before 3.23.
+    /** Whole GB billed against the plan: the size, or what a branch clone wrote. 0 where storage isn't billed. */
+    storageBilledGb?: number
+    storageAbovePlanGb?: number
+    /** Net, for a full month. */
+    storageAbovePlanMonthlyEur?: number
+    /** True for a branch clone, which is billed on what it writes rather than its size. */
+    storageBilledOnWrittenData?: boolean
+    storageMaxGb?: number
 }
 
-/** Long-running server-side work. Returned by scale and volume operations. */
+/** Long-running server-side work. Returned by scale and storage grow. */
 export interface ActionResult {
     id: number
 }
@@ -279,10 +283,7 @@ const enumName = (names: readonly string[], value: number | string) =>
 
 export interface StorageSettings {
     enableAutoScale?: boolean
-    autoScaleUpOnly?: boolean
-    /** null clears the ceiling — autoscaling then has no upper bound. */
-    autoScalingLimitGb?: number | null
-    minimumDiskSizeGb?: number | null
+    autoScalingLimitGb?: number
 }
 
 export interface CreateInstanceRequest {
@@ -509,17 +510,9 @@ export const api = {
             body: { PricingTierId: pricingTierId, UpScale: upScale },
         }),
 
-    createVolume: (instanceId: number | string, size: number) =>
-        request<ActionResult>(`/api/volumes/${instanceId}`, {
-            method: 'POST',
-            body: { size, instanceId: Number(instanceId) },
-        }),
-
-    resizeVolume: (volumeId: number, size: number) =>
-        request<ActionResult>(`/api/volumes/${volumeId}`, {
-            method: 'PATCH',
-            body: { volumeId, size },
-        }),
+    /** Grows a Postgres database's storage online. It never shrinks. */
+    growStorage: (id: number | string, sizeGb: number) =>
+        request<ActionResult>(`/api/instances/${id}/storage/grow`, { method: 'POST', body: { sizeGb } }),
 
     updateStorageSettings: (id: number | string, settings: StorageSettings) =>
         request<Instance>(`/api/instances/${id}/storage`, { method: 'PATCH', body: settings }),
