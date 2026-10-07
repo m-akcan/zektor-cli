@@ -306,7 +306,7 @@ export interface CreateInstanceResponse {
  * `connectionString` are always null there.
  */
 export interface ConnectionInfo {
-    type?: 'valkey' | 'redis' | 'mongo' | 'ferret' | 'postgres'
+    type?: 'valkey' | 'redis' | 'postgres'
     host: string
     port: number
     username?: string
