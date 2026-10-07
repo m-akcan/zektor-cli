@@ -28,8 +28,8 @@ interface CreateOptions {
 export async function create(group: 'database' | 'cache', opts: CreateOptions): Promise<void> {
     if (opts.storage)
         fail(
-            '--storage is not supported. Storage is fixed by the plan, so choose it with --tier. ' +
-                'The wizard shows a --storage flag, but its own create call does not send one.'
+            '--storage is not supported. Storage starts at what the plan includes; ' +
+                'grow it afterwards with `zektor storage resize`.'
         )
 
     if (!opts.name) fail('--name is required.')

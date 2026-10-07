@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { Command } from 'commander'
+import { Command, Option } from 'commander'
 import { create } from './commands/create.js'
 import { connect, list, remove, show } from './commands/instances.js'
 import { scale } from './commands/scale.js'
@@ -68,7 +68,10 @@ function addCreate(parent: Command, group: 'database' | 'cache') {
         .option('--tier <plan>', 'Plan name, e.g. AKVK-1 (required)')
         .option('--engine <engine>', 'Engine and optional version, e.g. postgres@17')
         .option('--region <region>', 'Region name or city, e.g. fsn1 (required)')
-        .option('--storage <storage>', 'Not supported — storage comes from the plan')
+        .option(
+            '--storage <storage>',
+            "Not supported: storage starts at the plan's included storage; grow it with `zektor storage resize`"
+        )
         .option('--wait', 'Wait until it is ready; exit non-zero if creating it fails')
         .option('--json', 'Emit JSON on stdout')
         .action(async (options) => {
@@ -119,11 +122,11 @@ program
 
 const storage = program
     .command('storage')
-    .description('Postgres storage: size and autoscaling')
+    .description('Postgres storage: size, growth (grow-only) and automatic growth')
 
 storage
     .command('show <id>')
-    .description('Show size, usage and autoscaling settings')
+    .description('Show size, usage, cost above the plan and automatic growth')
     .option('--json', 'Emit JSON on stdout')
     .action(async (id, options) => {
         await storageShow(id, options)
@@ -131,8 +134,8 @@ storage
 
 storage
     .command('resize <id>')
-    .description('Grow or shrink the volume. A shrink moves the data at 2 AM UTC.')
-    .requiredOption('--size <gb>', 'New size in whole gigabytes')
+    .description('Grow storage. It never shrinks; GB above the plan cost €0.15/GB/month.')
+    .requiredOption('--size <gb>', 'New size in whole GB, larger than now, at most 1000')
     .option('--wait', 'Wait until the change has finished; exit non-zero if it fails')
     .option('--json', 'Emit JSON on stdout')
     .action(async (id, options) => {
@@ -141,12 +144,13 @@ storage
 
 storage
     .command('autoscale <id>')
-    .description('Turn autoscaling on or off and set its bounds')
-    .option('--on', 'Enable autoscaling')
-    .option('--off', 'Disable autoscaling')
-    .option('--limit <gb>', 'Autoscaling ceiling in gigabytes')
-    .option('--min <gb>', 'Minimum disk size in gigabytes (write-only: the API never reports it back)')
-    .option('--up-only <yes|no>', 'Grow only (yes), or allow automatic shrinking (no)')
+    .description('Turn automatic growth on or off and set its limit')
+    .option('--on', 'Turn automatic growth on')
+    .option('--off', 'Turn automatic growth off')
+    .option('--limit <gb>', 'Largest size automatic growth may reach')
+    // Ignored since storage only grows; still parsed so 1.6 scripts keep running.
+    .addOption(new Option('--min <gb>').hideHelp())
+    .addOption(new Option('--up-only <yes|no>').hideHelp())
     .option('--json', 'Emit JSON on stdout')
     .action(async (id, options) => {
         await storageAutoscale(id, options)

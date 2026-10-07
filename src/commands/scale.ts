@@ -1,6 +1,7 @@
 import { api } from '../api.js'
 import { resolveTier } from '../resolve.js'
-import { ask, data, fail, info } from '../output.js'
+import { ask, data, fail, info, warn } from '../output.js'
+import { eur, includedGb, sizeGb, storageOnPlan } from '../storage-figures.js'
 import { waitForAction } from '../wait.js'
 
 /**
@@ -31,21 +32,39 @@ export async function scale(
     const upScale = target.monthlyPriceEur >= current.monthlyPriceEur
     const direction = upScale ? 'Upgrading' : 'Downgrading'
 
+    // Storage never shrinks, so what is billed now stays billed against what the
+    // target plan includes. Said whatever the flags: --yes skips only the question.
+    const storageCost = storageOnPlan(instance, target)
+
+    if (storageCost && storageCost.eur > 0) {
+        const included = includedGb(target)
+        const monthly = `€${eur(storageCost.eur)}/month net`
+
+        warn(
+            `Storage stays at ${sizeGb(instance)} GB: it never shrinks. ` +
+                (instance.storageBilledOnWrittenData
+                    ? `As a branch it is billed on what it writes: ${storageCost.gb} GB above ${target.name}'s ${included} GB, ${monthly}. `
+                    : `${target.name} includes ${included} GB, so ${storageCost.gb} GB are billed on top: ${monthly}. `) +
+                `Total ≈ plan €${target.monthlyPriceEur} + storage €${eur(storageCost.eur)}.`
+        )
+    }
+
     if (!opts.yes) {
         if (!process.stdin.isTTY)
             fail('Refusing to scale without a terminal to confirm at. Pass --yes if you mean it.')
 
-        // Downgrades are the dangerous direction: less memory or storage than the
-        // instance may currently be using, so name that rather than asking a bland
-        // "are you sure".
+        // Downgrades are the dangerous direction: less memory than the instance may
+        // currently be using, so name that rather than asking a bland "are you sure".
         const warning = upScale
             ? ''
-            : '\nThis reduces the resources available to a running instance. If it is using more ' +
+            : '\nThis reduces the memory available to a running instance. If it is using more ' +
               'than the smaller plan provides, that is a problem you will meet during the move.\n'
+
+        const storagePrice = storageCost && storageCost.eur > 0 ? ` + €${eur(storageCost.eur)} storage` : ''
 
         const answer = await ask(
             `${warning}${direction} ${instance.name} from ${current.name} (€${current.monthlyPriceEur}/mo) ` +
-                `to ${target.name} (€${target.monthlyPriceEur}/mo). Type the instance name to confirm: `
+                `to ${target.name} (€${target.monthlyPriceEur}/mo${storagePrice}). Type the instance name to confirm: `
         )
 
         if (answer.trim() !== instance.name) fail('Name did not match. Nothing was changed.')
@@ -67,5 +86,16 @@ export async function scale(
     }
 
     if (opts.json)
-        data({ instanceId: instance.id, actionId: action.id, from: current.name, to: target.name, upScale }, true)
+        data(
+            {
+                instanceId: instance.id,
+                actionId: action.id,
+                from: current.name,
+                to: target.name,
+                upScale,
+                storageAbovePlanGb: storageCost?.gb ?? null,
+                storageMonthlyEur: storageCost?.eur ?? null,
+            },
+            true
+        )
 }

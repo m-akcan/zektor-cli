@@ -67,7 +67,7 @@ environment variable is overriding the account you logged in as.
 | `zektor delete <id>` | Delete an instance. Asks you to type its name; `--yes` skips that. |
 | `zektor connect <id>` | Open `redis-cli` against a cache |
 | `zektor scale <id> --tier=…` | Move an instance to another plan |
-| `zektor storage show\|resize\|autoscale <id>` | Postgres storage (see below) |
+| `zektor storage show\|resize\|autoscale <id>` | Postgres storage: see what it costs, grow it, and set automatic growth (see below) |
 | `zektor mcp` | Run as an MCP server, so an editor or agent can drive the API (see below) |
 
 Every read command takes `--json`.
@@ -102,9 +102,8 @@ or pass a wrong one and the error lists what is valid.
 Creating runs in the background. Add `--wait` to block until the instance is
 ready; if creating it fails, the command prints why and exits non-zero.
 
-`--storage` appears in the dashboard's "equivalent CLI" panel but is rejected
-here: the wizard's own create call does not send it, and storage comes from the
-plan. Choose it with `--tier`.
+`--storage` is rejected: storage starts at what the plan includes. Grow it
+afterwards with `zektor storage resize`.
 
 ### Connecting
 
@@ -123,8 +122,10 @@ zektor storage autoscale 42 --on --limit=100
 ```
 
 `scale` asks you to type the instance name, since it restarts the instance;
-`--yes` skips that. A downgrade warns that the smaller plan may be below what
-the instance is currently using.
+`--yes` skips that. A downgrade warns that the smaller plan has less memory than
+the instance may be using. When the target plan includes less storage than the
+database is billed for, `scale` also says what the difference costs, with or
+without `--yes`.
 
 `scale` and `storage resize` run in the background too, and take `--wait`: it
 blocks until the change has finished, and on failure prints the reason and
@@ -132,16 +133,40 @@ exits non-zero. Without it, a failed scale is easy to miss, since the instance
 simply stays on its old plan.
 
 Storage is **PostgreSQL only** — a cache is sized by its plan, so use `scale`.
-A volume can grow or shrink; a shrink applies to the bill at once and the data
-moves to the smaller volume at 2 AM UTC. The first volume must be at least 10 GB.
 
-Two API limitations worth knowing:
+- **Included.** Every plan includes storage: 5 GB on AKPG-5 to AKPG-40, then 10,
+  20 and 40 GB on AKPG-80, 160 and 320. A new database starts there.
+- **Growing.** `storage resize` grows it any time, up to 1000 GB. It runs
+  online, with no restart, and prints on stderr what the new size costs.
+- **Never shrinks.** Storage only grows. Neither you, a plan change nor a
+  restore can make it smaller. The only way to pay for less is to `pg_dump`
+  into a new database and delete the old one.
+- **Price.** €0.15/GB/month net above what the plan includes, in whole GB,
+  prorated by the hour like plans. You pay for the size, not the usage:
+  deleting rows frees room, not money. `storage show` prints what is billed now.
+- **Payment.** Growing above the plan, or turning on automatic growth, needs a
+  payment method or account credit.
+- **Automatic growth** is opt-in, and needs a maximum above the current size:
+  `storage autoscale 42 --on --limit=100`. At 80% full it grows to the larger
+  of +5 GB or 70% full, never above the maximum. Each grow is permanent and
+  billed like a manual one, and you're notified each time. After a failed
+  automatic grow it waits a day. A limit can't be cleared once set, since the
+  API reads an omitted value as "leave unchanged"; set a new number, or turn
+  growth off with `--off`.
+- **Plan changes.** An upgrade to a plan that includes more raises the size to
+  the plan's, free. A downgrade keeps its storage, and the GB above the smaller
+  plan are billed.
+- **Branches.** A branch is billed on its plan, plus what it writes itself
+  above its plan's included storage, while it is a branch. Once promoted, it is
+  billed on its full size, which is the source's size when it was branched (or
+  larger, if grown).
+- **Legacy databases.** Databases created before growable storage can't grow
+  yet. They are moving soon, and are never billed for storage.
 
-- `--min` needs a recent API. Older versions accept the value but never return
-  it, and `storage show` says `not reported (older API)` rather than pretending
-  no minimum is set.
-- A ceiling or floor cannot be cleared once set — the API reads an omitted
-  value as "leave unchanged". Set a new number instead.
+**Changed in 1.7.0.** `storage resize` now grows storage through
+`/api/instances/{id}/storage/grow` and refuses a size that isn't larger than
+now. `storage autoscale` still accepts `--min` and `--up-only`, and ignores
+them. The MCP tool `resize_storage` now requires `confirm_name`.
 
 ## MCP server
 
@@ -170,10 +195,11 @@ For Claude Code, `claude mcp add zektor -- npx -y zektor mcp` does the same thin
 | `get_action` | read-only; how the background work started by `create_instance`, `scale_instance` or `resize_storage` went, by the `actionId` they return |
 | `list_plans`, `list_regions` | read-only; call these before creating rather than guessing a name |
 | `get_connection` | read-only, **returns a live password** for caches |
-| `get_storage` | read-only, PostgreSQL |
+| `get_storage` | read-only, PostgreSQL; size, usage and what is billed above the plan |
 | `create_instance` | costs money |
-| `scale_instance` | changes the bill; scaling down can leave an instance short of what it is using |
-| `resize_storage`, `set_autoscale` | PostgreSQL |
+| `scale_instance` | changes the bill; scaling down can leave an instance short of memory, and keeps its storage, billing the GB above the smaller plan |
+| `resize_storage` | PostgreSQL; grows storage, which can't be undone; GB above the plan are billed |
+| `set_autoscale` | PostgreSQL; turns automatic growth on or off, up to a limit |
 | `delete_instance` | **off by default** — see below |
 
 ### Guardrails
@@ -185,7 +211,7 @@ caller is a model, so that guard is translated rather than dropped.
 - **`delete_instance` is not registered unless `ZEKTOR_MCP_ALLOW_DESTRUCTIVE=1`
   is set.** By default the tool does not appear in the list at all, so the worst
   a confused or injected instruction achieves is spending money, not losing data.
-- **`scale_instance` and `delete_instance` require a `confirm_name` argument**
+- **`scale_instance`, `resize_storage` and `delete_instance` require a `confirm_name` argument**
   that must match the instance's real name. It can only be filled in by having
   actually looked the instance up, which is the property the typed-name prompt
   had.
@@ -251,8 +277,8 @@ including the MCP server — `ZEKTOR_API_URL=http://localhost:5098 node dist/ind
 serves your development backend rather than production.
 
 `npm run gen:api` writes the API's full OpenAPI types to `types/`, which is
-gitignored — it describes every endpoint including the admin surface, while this
-CLI uses four, and nothing imports it. It is a tool for checking the
+gitignored — it describes every endpoint including the admin surface, and
+nothing imports it. It is a tool for checking the
 hand-written interfaces in `src/api.ts` against the real contract, not a build
 input. Point it at a local API with
 `ZEKTOR_API_URL=http://localhost:5098 npm run gen:api`.
