@@ -51,6 +51,19 @@ export function billedOn(i: Instance): 'size' | 'written' | 'none' | undefined {
     return i.storageBilledGb === 0 ? 'none' : 'size'
 }
 
+/**
+ * What storage costs on top of `target` after a move to it. Storage never shrinks, so
+ * what is billed now stays billed, against what the new plan includes. Undefined where
+ * there is no figure: a cache, or an API before 3.23.
+ */
+export function storageOnPlan(i: Instance, target: PricingTier): { gb: number; eur: number } | undefined {
+    if (i.storageBilledGb == null) return undefined
+
+    const monthly = abovePlanEur(i.storageBilledGb, target)
+
+    return monthly === undefined ? undefined : { gb: Math.max(0, i.storageBilledGb - includedGb(target)), eur: monthly }
+}
+
 /** Money as it is written: two decimals. */
 export const eur = (amount: number) => amount.toFixed(2)
 

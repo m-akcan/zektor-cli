@@ -13,6 +13,7 @@ import {
     growStorage,
     includedGb,
     sizeGb,
+    storageOnPlan,
 } from './storage-figures.js'
 
 /**
@@ -430,9 +431,10 @@ export async function startMcpServer(): Promise<void> {
             title: 'Move an instance to another plan',
             description:
                 'Changes the plan an instance runs on, which changes what it costs. ' +
-                'Scaling DOWN reduces the memory and storage available to a running instance; ' +
-                'if it is using more than the smaller plan provides, that becomes a problem ' +
-                'during the move. Check current usage with get_instance first.',
+                'Scaling DOWN reduces memory; storage stays (it never shrinks) and GB above the ' +
+                'smaller plan are billed at €0.15/GB/month. If the instance is using more memory ' +
+                'than the smaller plan provides, that becomes a problem during the move. Check ' +
+                'current usage with get_instance first.',
             inputSchema: {
                 id: instanceId,
                 tier: z.string().describe('Target plan name from list_plans'),
@@ -464,6 +466,9 @@ export async function startMcpServer(): Promise<void> {
 
                 const action = await api.scaleInstance(id, target.id, upScale, current.product)
 
+                // Storage never shrinks: what is billed now stays billed against the new plan.
+                const storageCost = storageOnPlan(instance, target)
+
                 return {
                     instanceId: instance.id,
                     actionId: action.id,
@@ -471,6 +476,8 @@ export async function startMcpServer(): Promise<void> {
                     to: target.name,
                     direction: upScale ? 'up' : 'down',
                     monthlyPriceEur: target.monthlyPriceEur,
+                    storageAbovePlanGb: storageCost?.gb ?? null,
+                    storageMonthlyEur: storageCost?.eur ?? null,
                     status: 'queued',
                     note:
                         'Queued, not done. Poll get_action with actionId until status is "Success" or ' +
