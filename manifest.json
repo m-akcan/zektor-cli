@@ -21,7 +21,10 @@
     "entry_point": "dist/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/dist/index.js", "mcp"],
+      "args": [
+        "${__dirname}/dist/index.js",
+        "mcp"
+      ],
       "env": {
         "ZEKTOR_TOKEN": "${user_config.token}"
       }
@@ -36,29 +39,15 @@
       "required": false
     }
   },
-  "tools": [
-    { "name": "create_trial_database", "description": "Create a free trial database (only without a token)" },
-    { "name": "whoami", "description": "Show the authenticated account" },
-    { "name": "list_instances", "description": "List instances" },
-    { "name": "get_instance", "description": "Get one instance" },
-    { "name": "get_action", "description": "Check background work" },
-    { "name": "list_plans", "description": "List available plans" },
-    { "name": "list_regions", "description": "List regions" },
-    { "name": "get_connection", "description": "Get connection details" },
-    { "name": "create_instance", "description": "Create an instance" },
-    { "name": "scale_instance", "description": "Move an instance to another plan" },
-    { "name": "list_branches", "description": "List an instance's branches" },
-    { "name": "create_branch", "description": "Branch a PostgreSQL database" },
-    { "name": "set_branch_expiry", "description": "Change when a branch expires" },
-    { "name": "delete_branch", "description": "Delete a branch" },
-    { "name": "promote_branch", "description": "Make a branch the default" },
-    { "name": "create_ephemeral_role", "description": "Create a temporary PostgreSQL login" },
-    { "name": "get_storage", "description": "Show storage and automatic growth" },
-    { "name": "resize_storage", "description": "Grow storage" },
-    { "name": "set_autoscale", "description": "Configure automatic storage growth" }
-  ],
+  "tools_generated": true,
   "compatibility": {
-    "platforms": ["darwin", "win32", "linux"],
-    "runtimes": { "node": ">=18" }
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18"
+    }
   }
 }
