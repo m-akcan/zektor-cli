@@ -7,3 +7,4 @@ dist/
 # endpoint including the admin surface, while the CLI uses a handful, and
 # nothing imports it. Regenerate with `npm run gen:api` to check for drift.
 types/
+*.mcpb

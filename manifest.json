@@ -1,0 +1,53 @@
+{
+  "manifest_version": "0.3",
+  "name": "zektor",
+  "display_name": "Zektor",
+  "version": "0.0.0",
+  "description": "Managed Postgres and Valkey hosted in Germany. Agents can create a trial database with no signup.",
+  "author": {
+    "name": "Muhammed Akcan",
+    "url": "https://zektor.io"
+  },
+  "homepage": "https://zektor.io",
+  "documentation": "https://github.com/m-akcan/zektor-cli#mcp-server",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/m-akcan/zektor-cli"
+  },
+  "license": "MIT",
+  "icon": "icon.png",
+  "server": {
+    "type": "node",
+    "entry_point": "dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/dist/index.js",
+        "mcp"
+      ],
+      "env": {
+        "ZEKTOR_TOKEN": "${user_config.token}"
+      }
+    }
+  },
+  "user_config": {
+    "token": {
+      "type": "string",
+      "title": "Access token",
+      "description": "From Settings → Access tokens on zektor.io. Leave empty to create trial databases only.",
+      "sensitive": true,
+      "required": false
+    }
+  },
+  "tools_generated": true,
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32",
+      "linux"
+    ],
+    "runtimes": {
+      "node": ">=18"
+    }
+  }
+}
