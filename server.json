@@ -1,0 +1,36 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.m-akcan/zektor",
+  "title": "Zektor",
+  "description": "Managed Postgres and Valkey hosted in Germany. Agents can create a trial database with no signup.",
+  "websiteUrl": "https://zektor.io",
+  "repository": {
+    "url": "https://github.com/m-akcan/zektor-cli",
+    "source": "github"
+  },
+  "version": "1.7.1",
+  "packages": [
+    {
+      "registryType": "npm",
+      "identifier": "zektor",
+      "version": "1.7.1",
+      "transport": {
+        "type": "stdio"
+      },
+      "packageArguments": [
+        {
+          "type": "positional",
+          "value": "mcp"
+        }
+      ],
+      "environmentVariables": [
+        {
+          "name": "ZEKTOR_TOKEN",
+          "description": "Access token from Settings → Access tokens. Without one, the server can still create trial databases.",
+          "isRequired": false,
+          "isSecret": true
+        }
+      ]
+    }
+  ]
+}
