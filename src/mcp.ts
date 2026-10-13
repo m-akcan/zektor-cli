@@ -107,7 +107,11 @@ const detail = (i: Instance) => ({
     ...summarise(i),
     port: i.port ?? null,
     createdAt: i.createdAt ?? null,
-    monthlyPriceEur: i.pricingTier?.monthlyPriceEur ?? null,
+    // Every copy is billed as a database.
+    monthlyPriceEur: i.pricingTier?.monthlyPriceEur != null ? i.pricingTier.monthlyPriceEur * (i.copies ?? 1) : null,
+    copies: i.copies ?? 1,
+    readyCopies: i.readyCopies ?? null,
+    lastFailoverAt: i.lastFailoverAt ?? null,
     productGroup: i.pricingTier?.productGroup ?? null,
     storage: i.dbStorageLimitMb != null ? storage(i) : undefined,
     hint: 'Connection details, including any password, come from get_connection.',
@@ -306,7 +310,8 @@ export async function startMcpServer(): Promise<void> {
             title: 'List regions',
             description:
                 'Regions an instance can be created in. `available` is false where there is no ' +
-                'capacity right now; creating there will be refused.',
+                'capacity right now; creating there will be refused. `maxCopies` is the most ' +
+                'copies (high availability) a database may have there; 1 means none.',
             annotations: { readOnlyHint: true, openWorldHint: true },
         },
         async () =>
@@ -316,6 +321,7 @@ export async function startMcpServer(): Promise<void> {
                     city: l.city,
                     country: l.country,
                     available: l.rentingAvailable,
+                    maxCopies: l.maxCopies ?? 1,
                 }))
             )
     )
@@ -373,6 +379,9 @@ export async function startMcpServer(): Promise<void> {
             description:
                 'Provisions a database or cache. THIS COSTS MONEY — the plan is billed monthly ' +
                 'from creation until the instance is deleted.\n\n' +
+                'High availability: `copies` 2 or 3 (PostgreSQL only, where list_regions shows ' +
+                'maxCopies) runs each copy on its own server with automatic failover; EVERY COPY ' +
+                'IS BILLED AS A DATABASE, and copies cannot be changed later.\n\n' +
                 'Storage is not a parameter: it starts at the plan\'s included storage; grow it ' +
                 'later with resize_storage. Creating runs in the ' +
                 'background, so this returns an instance id and an actionId immediately. Poll ' +
@@ -387,10 +396,17 @@ export async function startMcpServer(): Promise<void> {
                     .string()
                     .optional()
                     .describe('Engine version, e.g. "postgres@17" or just "17". Omit for the default.'),
+                copies: z
+                    .number()
+                    .int()
+                    .min(1)
+                    .max(3)
+                    .optional()
+                    .describe('Databases only: 2 or 3 for high availability. Omit for one copy.'),
             },
             annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         },
-        async ({ group, name, tier, region, engine }) =>
+        async ({ group, name, tier, region, engine, copies }) =>
             guarded(async () => {
                 const plan = resolveTier(await api.listTiers(), group, tier)
 
@@ -402,13 +418,25 @@ export async function startMcpServer(): Promise<void> {
                     engine && !engine.includes('@') ? `${plan.product}@${engine}` : engine
                 )
 
-                const location = resolveLocation(await api.listLocations(), region)
+                const locations = await api.listLocations()
+                const location = resolveLocation(locations, region)
+
+                const wanted = copies ?? 1
+                if (wanted > 1 && group !== 'database') throw new Error('copies is for databases only.')
+                const maxCopies = locations.find((l) => l.id === location)?.maxCopies ?? 1
+                if (wanted > maxCopies)
+                    throw new Error(
+                        maxCopies === 1
+                            ? 'High availability is not offered in this region (or not to this account yet).'
+                            : `This region offers up to ${maxCopies} copies.`
+                    )
 
                 const result = await api.createInstance({
                     name,
                     location,
                     priceId: plan.id,
                     dockerImageId,
+                    ...(wanted > 1 ? { copies: wanted } : {}),
                 })
 
                 return {
@@ -416,7 +444,8 @@ export async function startMcpServer(): Promise<void> {
                     actionId: result.actionId,
                     name,
                     plan: plan.name,
-                    monthlyPriceEur: plan.monthlyPriceEur,
+                    copies: wanted,
+                    monthlyPriceEur: plan.monthlyPriceEur * wanted,
                     status: 'creating',
                     note:
                         'Queued, not done. Creating takes about a minute. Poll get_action with actionId ' +

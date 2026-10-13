@@ -36,6 +36,12 @@ export async function show(id: string, opts: { json?: boolean }): Promise<void> 
         ['status', instance.status],
         ['engine', instance.pricingTier?.product ?? '?'],
         ['plan', instance.pricingTier?.name ?? '?'],
+        ...((instance.copies ?? 1) > 1
+            ? ([
+                  ['copies', `${instance.copies} (${instance.readyCopies ?? '?'} ready)`],
+                  ...(instance.lastFailoverAt ? ([['failover', instance.lastFailoverAt]] as [string, string][]) : []),
+              ] as [string, string][])
+            : []),
         ['location', instance.location ?? ''],
         ['port', String(instance.port ?? '')],
         ['created', instance.createdAt ?? ''],
