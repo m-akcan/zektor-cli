@@ -69,6 +69,10 @@ function addCreate(parent: Command, group: 'database' | 'cache') {
         .option('--engine <engine>', 'Engine and optional version, e.g. postgres@17')
         .option('--region <region>', 'Region name or city, e.g. fsn1 (required)')
         .option(
+            '--copies <n>',
+            'Databases only: 2 or 3 for high availability, each copy on its own server and billed as a database'
+        )
+        .option(
             '--storage <storage>',
             "Not supported: storage starts at the plan's included storage; grow it with `zektor storage resize`"
         )

@@ -21,6 +21,7 @@ interface CreateOptions {
     region?: string
     tier?: string
     storage?: string
+    copies?: string
     json?: boolean
     wait?: boolean
 }
@@ -58,16 +59,34 @@ export async function create(group: 'database' | 'cache', opts: CreateOptions): 
 
     const location = resolveLocation(locations, opts.region)
 
+    const copies = opts.copies === undefined ? 1 : Number(opts.copies)
+    if (!Number.isInteger(copies) || copies < 1 || copies > 3) fail('--copies must be 1, 2 or 3.')
+    if (copies > 1 && group !== 'database') fail('--copies is for databases only.')
+    const maxCopies = locations.find((l) => l.id === location)?.maxCopies ?? 1
+    if (copies > maxCopies)
+        fail(
+            maxCopies === 1
+                ? 'High availability is not offered in this region (or not to this account yet).'
+                : `This region offers up to ${maxCopies} copies.`
+        )
+
     const result = await api.createInstance({
         name: opts.name,
         location,
         priceId: tier.id,
         dockerImageId,
+        ...(copies > 1 ? { copies } : {}),
     })
 
     // Provisioning is asynchronous and takes under a minute; say so rather than
     // implying the instance is ready to connect to.
-    if (!opts.json) info(`Creating ${opts.name} (#${result.instanceId}) on ${tier.name}.`)
+    if (!opts.json)
+        info(
+            copies > 1
+                ? `Creating ${opts.name} (#${result.instanceId}) on ${tier.name} × ${copies} copies, ` +
+                      `€${(tier.monthlyPriceEur * copies).toFixed(2)}/mo.`
+                : `Creating ${opts.name} (#${result.instanceId}) on ${tier.name}.`
+        )
 
     if (opts.wait) {
         await waitForAction(result.actionId, `Creating ${opts.name}`)

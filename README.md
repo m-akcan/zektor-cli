@@ -105,6 +105,12 @@ ready; if creating it fails, the command prints why and exits non-zero.
 `--storage` is rejected: storage starts at what the plan includes. Grow it
 afterwards with `zektor storage resize`.
 
+`--copies=2` or `--copies=3` creates a high-availability database: each copy
+runs on its own server and a standby takes over automatically if the primary's
+server fails. Every copy is billed as a database, and the number can't be
+changed later. Only regions with high availability accept it; `zektor show`
+lists the copies and how many are ready.
+
 ### Connecting
 
 `connect` opens `redis-cli` for a cache. For Postgres it prints the command

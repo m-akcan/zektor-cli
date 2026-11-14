@@ -208,6 +208,8 @@ export interface Location {
     city: string
     country: string
     rentingAvailable: boolean
+    /** The most copies a database may have here: 1 without high availability, up to 3. Absent before 3.27. */
+    maxCopies?: number
 }
 
 export interface Instance {
@@ -226,6 +228,12 @@ export interface Instance {
     pricingTier: PricingTier
     /** For an instance in error, why creating it failed. Absent on older APIs. */
     failureMessage?: string | null
+    /** Copies, each on its own server: 1, or 2-3 for high availability. Every copy is billed. Absent before 3.27. */
+    copies?: number
+    /** Copies ready at the last check (about once a minute). Null unless highly available. */
+    readyCopies?: number | null
+    /** When the primary last moved to a standby on its own. */
+    lastFailoverAt?: string | null
     /** False for a database created before its node's storage pool existed. Absent before 3.22. */
     canBranch?: boolean
     /** Whether its storage can grow: false on such a legacy database, or while growing is off. Absent before 3.22. */
@@ -291,6 +299,8 @@ export interface CreateInstanceRequest {
     location: number
     priceId: number
     dockerImageId?: number
+    /** 2 or 3 for high availability (PostgreSQL only). Omit for one copy. */
+    copies?: number
 }
 
 export interface CreateInstanceResponse {
