@@ -1,5 +1,5 @@
 import { api } from '../api.js'
-import { options, resolveEngine, resolveLocation, resolveTier } from '../resolve.js'
+import { haRefusal, options, resolveEngine, resolveLocation, resolveTier } from '../resolve.js'
 import { data, fail, info } from '../output.js'
 import { waitForAction } from '../wait.js'
 
@@ -60,15 +60,12 @@ export async function create(group: 'database' | 'cache', opts: CreateOptions): 
     const location = resolveLocation(locations, opts.region)
 
     const copies = opts.copies === undefined ? 1 : Number(opts.copies)
-    if (!Number.isInteger(copies) || copies < 1 || copies > 3) fail('--copies must be 1, 2 or 3.')
+    if (copies !== 1 && copies !== 3) fail('--copies must be 1, or 3 for high availability.')
     if (copies > 1 && group !== 'database') fail('--copies is for databases only.')
-    const maxCopies = locations.find((l) => l.id === location)?.maxCopies ?? 1
-    if (copies > maxCopies)
-        fail(
-            maxCopies === 1
-                ? 'High availability is not offered in this region (or not to this account yet).'
-                : `This region offers up to ${maxCopies} copies.`
-        )
+    if (copies > 1) {
+        const refusal = haRefusal(locations.find((l) => l.id === location), tier.id, tiers)
+        if (refusal) fail(refusal)
+    }
 
     const result = await api.createInstance({
         name: opts.name,

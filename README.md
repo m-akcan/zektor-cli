@@ -105,11 +105,12 @@ ready; if creating it fails, the command prints why and exits non-zero.
 `--storage` is rejected: storage starts at what the plan includes. Grow it
 afterwards with `zektor storage resize`.
 
-`--copies=2` or `--copies=3` creates a high-availability database: each copy
-runs on its own server and a standby takes over automatically if the primary's
-server fails. Every copy is billed as a database, and the number can't be
-changed later. Only regions with high availability accept it; `zektor show`
-lists the copies and how many are ready.
+`--copies=3` creates a high-availability database: three copies, each on its
+own server, and a standby takes over automatically if the primary's server
+fails. Every copy is billed as a database, and it can't be switched off later.
+It is offered on some plans in some regions; a plan that can't have it there
+is refused with the plans that can. The first one in a region can take about
+15 minutes to create. `zektor show` lists the copies and how many are ready.
 
 ### Connecting
 
