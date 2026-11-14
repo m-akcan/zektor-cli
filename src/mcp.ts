@@ -4,7 +4,7 @@ import { z } from 'zod'
 import { api, type Instance, type StorageSettings } from './api.js'
 import { resolveApiUrl, resolveToken, tokenIsFromEnv } from './config.js'
 import { VERSION } from './version.js'
-import { imageVersion, resolveEngine, resolveLocation, resolveTier } from './resolve.js'
+import { haRefusal, imageVersion, resolveEngine, resolveLocation, resolveTier } from './resolve.js'
 import { whyNotActive } from './status.js'
 import {
     abovePlanAfterGrow,
@@ -310,20 +310,22 @@ export async function startMcpServer(): Promise<void> {
             title: 'List regions',
             description:
                 'Regions an instance can be created in. `available` is false where there is no ' +
-                'capacity right now; creating there will be refused. `maxCopies` is the most ' +
-                'copies (high availability) a database may have there; 1 means none.',
+                'capacity right now; creating there will be refused. `haPlans` are the plans a ' +
+                'database can be created on with high availability (copies: 3) there right now; ' +
+                'empty means none.',
             annotations: { readOnlyHint: true, openWorldHint: true },
         },
         async () =>
-            guarded(async () =>
-                (await api.listLocations()).map((l) => ({
+            guarded(async () => {
+                const [locations, tiers] = await Promise.all([api.listLocations(), api.listTiers()])
+                return locations.map((l) => ({
                     name: l.name,
                     city: l.city,
                     country: l.country,
                     available: l.rentingAvailable,
-                    maxCopies: l.maxCopies ?? 1,
+                    haPlans: tiers.filter((t) => (l.haPriceIds ?? []).includes(t.id)).map((t) => t.name),
                 }))
-            )
+            })
     )
 
     server.registerTool(
@@ -379,9 +381,10 @@ export async function startMcpServer(): Promise<void> {
             description:
                 'Provisions a database or cache. THIS COSTS MONEY — the plan is billed monthly ' +
                 'from creation until the instance is deleted.\n\n' +
-                'High availability: `copies` 2 or 3 (PostgreSQL only, where list_regions shows ' +
-                'maxCopies) runs each copy on its own server with automatic failover; EVERY COPY ' +
-                'IS BILLED AS A DATABASE, and copies cannot be changed later.\n\n' +
+                'High availability: `copies` 3 (PostgreSQL only, on a plan list_regions shows in ' +
+                'haPlans for the region) runs each copy on its own server with automatic failover; ' +
+                'EVERY COPY IS BILLED AS A DATABASE, and it cannot be switched off later. The first ' +
+                'one in a region can take about 15 minutes to create.\n\n' +
                 'Storage is not a parameter: it starts at the plan\'s included storage; grow it ' +
                 'later with resize_storage. Creating runs in the ' +
                 'background, so this returns an instance id and an actionId immediately. Poll ' +
@@ -397,18 +400,16 @@ export async function startMcpServer(): Promise<void> {
                     .optional()
                     .describe('Engine version, e.g. "postgres@17" or just "17". Omit for the default.'),
                 copies: z
-                    .number()
-                    .int()
-                    .min(1)
-                    .max(3)
+                    .union([z.literal(1), z.literal(3)])
                     .optional()
-                    .describe('Databases only: 2 or 3 for high availability. Omit for one copy.'),
+                    .describe('Databases only: 3 for high availability. Omit for one copy.'),
             },
             annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
         },
         async ({ group, name, tier, region, engine, copies }) =>
             guarded(async () => {
-                const plan = resolveTier(await api.listTiers(), group, tier)
+                const tiers = await api.listTiers()
+                const plan = resolveTier(tiers, group, tier)
 
                 // A bare "17" is a version, not an engine name. The CLI gets the
                 // engine for free from the `product@version` grammar; here the
@@ -423,13 +424,10 @@ export async function startMcpServer(): Promise<void> {
 
                 const wanted = copies ?? 1
                 if (wanted > 1 && group !== 'database') throw new Error('copies is for databases only.')
-                const maxCopies = locations.find((l) => l.id === location)?.maxCopies ?? 1
-                if (wanted > maxCopies)
-                    throw new Error(
-                        maxCopies === 1
-                            ? 'High availability is not offered in this region (or not to this account yet).'
-                            : `This region offers up to ${maxCopies} copies.`
-                    )
+                if (wanted > 1) {
+                    const refusal = haRefusal(locations.find((l) => l.id === location), plan.id, tiers)
+                    if (refusal) throw new Error(refusal)
+                }
 
                 const result = await api.createInstance({
                     name,

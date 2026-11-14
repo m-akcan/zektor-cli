@@ -208,8 +208,10 @@ export interface Location {
     city: string
     country: string
     rentingAvailable: boolean
-    /** The most copies a database may have here: 1 without high availability, up to 3. Absent before 3.27. */
+    /** 3 where some plan can be had with high availability here, otherwise 1. Absent before 3.27. */
     maxCopies?: number
+    /** The plans (tier ids) that can be ordered here with high availability right now. Absent before 3.29. */
+    haPriceIds?: number[]
 }
 
 export interface Instance {
@@ -299,7 +301,7 @@ export interface CreateInstanceRequest {
     location: number
     priceId: number
     dockerImageId?: number
-    /** 2 or 3 for high availability (PostgreSQL only). Omit for one copy. */
+    /** 3 for high availability (PostgreSQL only). Omit for one copy. */
     copies?: number
 }
 

@@ -116,3 +116,15 @@ export function resolveLocation(locations: Location[], region: string): number {
 
     return match.id
 }
+
+/**
+ * Why a high-availability database of `tierId` can't be had in `location`, or null when
+ * it can. Names the plans that can, since HA is offered on some plans and not others.
+ */
+export function haRefusal(location: Location | undefined, tierId: number, tiers: PricingTier[]): string | null {
+    const ids = location?.haPriceIds ?? []
+    if (ids.includes(tierId)) return null
+    if (ids.length === 0) return 'High availability is not available in this region right now (or not to this account yet).'
+    const names = tiers.filter((t) => ids.includes(t.id)).map((t) => t.name)
+    return `High availability is available in this region on ${names.join(', ')}.`
+}
