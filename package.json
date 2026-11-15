@@ -1,6 +1,6 @@
 {
   "name": "zektor",
-  "version": "1.7.1",
+  "version": "1.8.0",
   "mcpName": "io.github.m-akcan/zektor",
   "description": "Command-line client for Zektor.io managed databases and caches",
   "license": "MIT",
