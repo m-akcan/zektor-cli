@@ -310,7 +310,8 @@ export async function startMcpServer(): Promise<void> {
             title: 'List regions',
             description:
                 'Regions an instance can be created in. `available` is false where there is no ' +
-                'capacity right now; creating there will be refused. `haPlans` are the plans a ' +
+                'capacity right now; creating there will be refused. `plans` are the plans a new ' +
+                'instance can be created on there right now (null: every plan). `haPlans` are the plans a ' +
                 'database can be created on with high availability (copies: 3) there right now; ' +
                 'empty means none.',
             annotations: { readOnlyHint: true, openWorldHint: true },
@@ -319,10 +320,12 @@ export async function startMcpServer(): Promise<void> {
             guarded(async () => {
                 const [locations, tiers] = await Promise.all([api.listLocations(), api.listTiers()])
                 return locations.map((l) => ({
+                    region: l.region,
                     name: l.name,
                     city: l.city,
                     country: l.country,
                     available: l.rentingAvailable,
+                    plans: l.priceIds == null ? null : tiers.filter((t) => l.priceIds!.includes(t.id)).map((t) => t.name),
                     haPlans: tiers.filter((t) => (l.haPriceIds ?? []).includes(t.id)).map((t) => t.name),
                 }))
             })
@@ -394,7 +397,7 @@ export async function startMcpServer(): Promise<void> {
                 group: z.enum(['database', 'cache']).describe('database for PostgreSQL, cache for Valkey/Redis'),
                 name: z.string().min(1).describe('Instance name'),
                 tier: z.string().describe('Plan name from list_plans, e.g. AKPG-5'),
-                region: z.string().describe('Region name (e.g. fsn1) or city from list_regions. Required: there is no default.'),
+                region: z.string().describe('Region (e.g. germany), location (fsn1) or city from list_regions. Required: there is no default.'),
                 engine: z
                     .string()
                     .optional()
