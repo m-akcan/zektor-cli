@@ -98,16 +98,19 @@ export function resolveEngine(tier: PricingTier, engine?: string): number | unde
     return image.id
 }
 
-/** Region by name or city. Refuses one with no capacity rather than letting the API do it. */
+/** Region by its name ("germany"), location ("fsn1") or city. Refuses one with no capacity rather than letting the API do it. */
 export function resolveLocation(locations: Location[], region: string): number {
     const match = locations.find(
-        (l) => slug(l.name) === slug(region) || slug(l.city) === slug(region)
+        (l) =>
+            (l.region != null && slug(l.region) === slug(region)) ||
+            slug(l.name) === slug(region) ||
+            slug(l.city) === slug(region)
     )
 
     if (!match)
         throw new ResolutionError(
             `Unknown region "${region}". Available: ${options(
-                locations.filter((l) => l.rentingAvailable).map((l) => l.name)
+                locations.filter((l) => l.rentingAvailable).map((l) => (l.region ? slug(l.region) : l.name))
             )}`
         )
 

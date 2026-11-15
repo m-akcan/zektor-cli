@@ -92,7 +92,7 @@ curl -X POST https://api.zektor.io/api/trial
 ### Creating
 
 ```bash
-zektor db create --name=my-db --tier=AKPG-5 --region=nbg1 --engine=postgres@17
+zektor db create --name=my-db --tier=AKPG-5 --region=germany --engine=postgres@17
 ```
 
 `--tier`, `--region` and `--engine` take the names you see in the dashboard and

@@ -208,6 +208,10 @@ export interface Location {
     city: string
     country: string
     rentingAvailable: boolean
+    /** The region customers choose: "Germany" (fsn1) or "Finland" (hel1). Absent before 3.30. */
+    region?: string
+    /** The plans (tier ids) a new database may be ordered on here; null or absent for every plan. */
+    priceIds?: number[] | null
     /** 3 where some plan can be had with high availability here, otherwise 1. Absent before 3.27. */
     maxCopies?: number
     /** The plans (tier ids) that can be ordered here with high availability right now. Absent before 3.29. */
